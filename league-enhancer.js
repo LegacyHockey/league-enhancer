@@ -1,6 +1,5 @@
 (function(){
   'use strict';
-
   
   const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
   
@@ -12,7 +11,7 @@
     if (!seasonMatch) return;
     
     const season = seasonMatch[1];
-    const cacheKey = `league_${season}`;
+    const cacheKey = `league_all_${season}`;
     const cached = localStorage.getItem(cacheKey);
     
     let allPlayerData = {};
@@ -25,19 +24,23 @@
         allPlayerData = parsedCache.data;
       } else {
         console.log('Cache expired, fetching fresh data');
+        showLoadingIndicator('Loading all team rosters...');
         allPlayerData = await fetchAllTeamRosters(season);
         localStorage.setItem(cacheKey, JSON.stringify({
           data: allPlayerData,
           timestamp: Date.now()
         }));
+        hideLoadingIndicator();
       }
     } else {
-      console.log('No cache found, fetching roster data');
+      console.log('No cache found, fetching roster data for all teams');
+      showLoadingIndicator('Loading all team rosters... This may take 20-30 seconds.');
       allPlayerData = await fetchAllTeamRosters(season);
       localStorage.setItem(cacheKey, JSON.stringify({
         data: allPlayerData,
         timestamp: Date.now()
       }));
+      hideLoadingIndicator();
     }
     
     if (Object.keys(allPlayerData).length === 0) {
@@ -54,6 +57,49 @@
     });
   }
   
+  function showLoadingIndicator(message) {
+    const indicator = document.createElement('div');
+    indicator.id = 'roster-loading-indicator';
+    indicator.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <div style="width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        <span>${message}</span>
+      </div>
+    `;
+    indicator.style.cssText = `
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      background: #2c3e50;
+      color: white;
+      padding: 15px 25px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      z-index: 99999;
+    `;
+    
+    const style = document.createElement('style');
+    style.textContent = `
+      @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
+      }
+    `;
+    document.head.appendChild(style);
+    document.body.appendChild(indicator);
+  }
+  
+  function hideLoadingIndicator() {
+    const indicator = document.getElementById('roster-loading-indicator');
+    if (indicator) {
+      indicator.style.transition = 'opacity 0.3s';
+      indicator.style.opacity = '0';
+      setTimeout(() => indicator.remove(), 300);
+    }
+  }
+  
   async function fetchAllTeamRosters(season) {
     // Find all unique team page IDs from links on the page
     const teamIds = new Set();
@@ -68,14 +114,18 @@
     
     const allData = {};
     let count = 0;
-    const maxTeams = 50; // Limit to first 50 teams to avoid too many requests
     
+    // Fetch ALL teams (no limit)
     for (const teamId of teamIds) {
-      if (count >= maxTeams) break;
-      
       const rosterData = await fetchTeamRoster(teamId, season);
       Object.assign(allData, rosterData);
       count++;
+      
+      // Update loading indicator
+      const indicator = document.getElementById('roster-loading-indicator');
+      if (indicator) {
+        indicator.querySelector('span').textContent = `Loading rosters... ${count}/${teamIds.size} teams`;
+      }
       
       // Small delay to avoid overwhelming the server
       await new Promise(resolve => setTimeout(resolve, 100));
