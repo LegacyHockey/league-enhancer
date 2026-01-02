@@ -2,29 +2,42 @@
   'use strict';
   
   const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
+  let allPlayerData = {};
+  let isEnhancing = false;
   
   async function enhanceLeagueStats() {
     // Only run on league stats pages
     if (!location.href.includes('league_instance')) return;
+    if (isEnhancing) return;
     
     const seasonMatch = location.href.match(/subseason=(\d+)/);
     if (!seasonMatch) return;
     
     const season = seasonMatch[1];
-    const cacheKey = `league_all_${season}`;
-    const cached = localStorage.getItem(cacheKey);
     
-    let allPlayerData = {};
-    
-    // Check cache
-    if (cached) {
-      const parsedCache = JSON.parse(cached);
-      if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
-        console.log('Using cached league roster data');
-        allPlayerData = parsedCache.data;
+    // Load data if not already loaded
+    if (Object.keys(allPlayerData).length === 0) {
+      const cacheKey = `league_all_${season}`;
+      const cached = localStorage.getItem(cacheKey);
+      
+      if (cached) {
+        const parsedCache = JSON.parse(cached);
+        if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
+          console.log('Using cached league roster data');
+          allPlayerData = parsedCache.data;
+        } else {
+          console.log('Cache expired, fetching fresh data');
+          showLoadingIndicator('Loading all team rosters...');
+          allPlayerData = await fetchAllTeamRosters(season);
+          localStorage.setItem(cacheKey, JSON.stringify({
+            data: allPlayerData,
+            timestamp: Date.now()
+          }));
+          hideLoadingIndicator();
+        }
       } else {
-        console.log('Cache expired, fetching fresh data');
-        showLoadingIndicator('Loading all team rosters...');
+        console.log('No cache found, fetching roster data for all teams');
+        showLoadingIndicator('Loading all team rosters... This may take 20-30 seconds.');
         allPlayerData = await fetchAllTeamRosters(season);
         localStorage.setItem(cacheKey, JSON.stringify({
           data: allPlayerData,
@@ -32,15 +45,6 @@
         }));
         hideLoadingIndicator();
       }
-    } else {
-      console.log('No cache found, fetching roster data for all teams');
-      showLoadingIndicator('Loading all team rosters... This may take 20-30 seconds.');
-      allPlayerData = await fetchAllTeamRosters(season);
-      localStorage.setItem(cacheKey, JSON.stringify({
-        data: allPlayerData,
-        timestamp: Date.now()
-      }));
-      hideLoadingIndicator();
     }
     
     if (Object.keys(allPlayerData).length === 0) {
@@ -199,12 +203,14 @@
     posHeader.textContent = 'Pos';
     posHeader.className = sampleHeader.className;
     posHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
+    posHeader.title = 'Sort by Position (sorts current page only)';
     posHeader.onclick = () => sortTable(table, nameIndex + 1);
     
     const gradeHeader = document.createElement('th');
     gradeHeader.textContent = 'Grade';
     gradeHeader.className = sampleHeader.className;
     gradeHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
+    gradeHeader.title = 'Sort by Grade (sorts current page only)';
     gradeHeader.onclick = () => sortTable(table, nameIndex + 2);
     
     // Insert headers after Name column
@@ -277,12 +283,37 @@
   }
   
   // Run when page loads
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      setTimeout(enhanceLeagueStats, 2000);
-    });
-  } else {
+  function init() {
     setTimeout(enhanceLeagueStats, 2000);
   }
+  
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+  
+  // Watch for pagination changes (when new tables are loaded)
+  const observer = new MutationObserver((mutations) => {
+    let shouldEnhance = false;
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
+        if (node.nodeType === 1) {
+          if (node.tagName === 'TABLE' || node.querySelector('table')) {
+            shouldEnhance = true;
+          }
+        }
+      });
+    });
+    
+    if (shouldEnhance) {
+      setTimeout(enhanceLeagueStats, 500);
+    }
+  });
+  
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true
+  });
   
 })();
