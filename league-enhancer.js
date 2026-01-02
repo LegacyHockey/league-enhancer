@@ -5,8 +5,31 @@
   let allPlayerData = {};
   let isEnhancing = false;
   
+  // All Minnesota conference page IDs (excluding Out of State)
+  const MN_CONFERENCES = [
+    '9113382', // Big 9
+    '9113405', // Big South
+    '9113424', // Central Lakes
+    '9113443', // Granite Ridge
+    '9113450', // IMAC
+    '9113459', // Independents
+    '9113474', // Iron Range
+    '9113483', // Lake
+    '9113496', // Lake Superior
+    '9113513', // Mariucci
+    '9113528', // Metro East
+    '9113545', // Metro West
+    '9113562', // Mississippi 8
+    '9113577', // Northwest
+    '9113586', // Northwest Suburban
+    '9113611', // South Suburban
+    '9113630', // Suburban East
+    '9113656', // Tri-Metro
+    '9113667', // West Central
+    '9113678'  // Wright County
+  ];
+  
   async function enhanceLeagueStats() {
-    // Only run on league stats pages
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
     
@@ -22,7 +45,7 @@
     
     // Load data if not already loaded
     if (Object.keys(allPlayerData).length === 0) {
-      const cacheKey = `league_all_${season}`;
+      const cacheKey = `league_mn_${season}`;
       const cached = localStorage.getItem(cacheKey);
       
       if (cached) {
@@ -32,8 +55,8 @@
           allPlayerData = parsedCache.data;
         } else {
           console.log('Cache expired, fetching fresh data');
-          showLoadingIndicator('Loading all team rosters...');
-          allPlayerData = await fetchAllTeamRosters(season);
+          showLoadingIndicator('Loading all Minnesota team rosters...');
+          allPlayerData = await fetchAllMNTeamRosters(season);
           localStorage.setItem(cacheKey, JSON.stringify({
             data: allPlayerData,
             timestamp: Date.now()
@@ -41,9 +64,9 @@
           hideLoadingIndicator();
         }
       } else {
-        console.log('No cache found, fetching roster data for all teams');
-        showLoadingIndicator('Loading all team rosters... This may take 20-30 seconds.');
-        allPlayerData = await fetchAllTeamRosters(season);
+        console.log('No cache found, fetching roster data for all Minnesota teams');
+        showLoadingIndicator('Loading all Minnesota team rosters... This may take 1-2 minutes.');
+        allPlayerData = await fetchAllMNTeamRosters(season);
         localStorage.setItem(cacheKey, JSON.stringify({
           data: allPlayerData,
           timestamp: Date.now()
@@ -73,7 +96,6 @@
   }
   
   async function waitForTables() {
-    // Wait for table rows to have actual player data (not loading placeholders)
     let attempts = 0;
     const maxAttempts = 20;
     
@@ -84,14 +106,13 @@
       tables.forEach(table => {
         const rows = table.querySelectorAll('tbody tr');
         rows.forEach(row => {
-          const nameCell = row.querySelector('td:nth-child(2) a[href*="roster_players"]');
+          const nameCell = row.querySelector('td a[href*="roster_players"]');
           if (nameCell) hasPlayerLinks = true;
         });
       });
       
       if (hasPlayerLinks) {
-        // Found player links, wait a bit more to ensure all are loaded
-        await new Promise(resolve => setTimeout(resolve, 300));
+        await new Promise(resolve => setTimeout(resolve, 500));
         return;
       }
       
@@ -143,35 +164,62 @@
     }
   }
   
-  async function fetchAllTeamRosters(season) {
-    // Find all unique team page IDs from links on the page
-    const teamIds = new Set();
-    document.querySelectorAll('a[href*="/page/show/"]').forEach(link => {
-      if (link.href.includes(`subseason=${season}`) && link.href.includes('use_abbrev=true')) {
-        const match = link.href.match(/page\/show\/(\d+)/);
-        if (match) teamIds.add(match[1]);
+  async function fetchAllMNTeamRosters(season) {
+    const allTeamIds = new Set();
+    
+    // Fetch team IDs from each Minnesota conference
+    for (let i = 0; i < MN_CONFERENCES.length; i++) {
+      const confId = MN_CONFERENCES[i];
+      const url = `https://www.legacy.hockey/page/show/${confId}?subseason=${season}`;
+      
+      try {
+        const response = await fetch(url);
+        if (!response.ok) continue;
+        
+        const html = await response.text();
+        const doc = new DOMParser().parseFromString(html, 'text/html');
+        
+        // Find all team links in the conference page
+        doc.querySelectorAll('a[href*="/page/show/"]').forEach(link => {
+          if (link.href.includes(`subseason=${season}`)) {
+            const match = link.href.match(/page\/show\/(\d+)/);
+            if (match && match[1] !== confId) {
+              allTeamIds.add(match[1]);
+            }
+          }
+        });
+        
+        // Update indicator
+        const indicator = document.getElementById('roster-loading-indicator');
+        if (indicator) {
+          indicator.querySelector('span').textContent = 
+            `Scanning conferences... ${i + 1}/${MN_CONFERENCES.length}`;
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 50));
+      } catch (error) {
+        console.error(`Error fetching conference ${confId}:`, error);
       }
-    });
+    }
     
-    console.log(`Found ${teamIds.size} teams to fetch`);
+    console.log(`Found ${allTeamIds.size} Minnesota teams`);
     
+    // Now fetch rosters for all teams
     const allData = {};
     let count = 0;
     
-    // Fetch ALL teams (no limit)
-    for (const teamId of teamIds) {
+    for (const teamId of allTeamIds) {
       const rosterData = await fetchTeamRoster(teamId, season);
       Object.assign(allData, rosterData);
       count++;
       
-      // Update loading indicator
       const indicator = document.getElementById('roster-loading-indicator');
       if (indicator) {
-        indicator.querySelector('span').textContent = `Loading rosters... ${count}/${teamIds.size} teams`;
+        indicator.querySelector('span').textContent = 
+          `Loading rosters... ${count}/${allTeamIds.size} teams`;
       }
       
-      // Small delay to avoid overwhelming the server
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 80));
     }
     
     console.log(`Fetched roster data for ${count} teams, ${Object.keys(allData).length} players`);
@@ -220,8 +268,6 @@
     const bodyRows = table.querySelectorAll('tbody tr');
     
     if (!headerRow || bodyRows.length === 0) return;
-    
-    // Check if already enhanced
     if (headerRow.textContent.includes('Pos')) return;
     
     const headers = headerRow.querySelectorAll('th');
@@ -235,7 +281,6 @@
     
     if (nameIndex === -1) return;
     
-    // Create header cells
     const sampleHeader = headers[0];
     
     const posHeader = document.createElement('th');
@@ -252,11 +297,9 @@
     gradeHeader.title = 'Sort by Grade (sorts current page only)';
     gradeHeader.onclick = () => sortTable(table, nameIndex + 2);
     
-    // Insert headers after Name column
     headers[nameIndex].after(gradeHeader);
     headers[nameIndex].after(posHeader);
     
-    // Add data to rows
     let matchedCount = 0;
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
@@ -279,19 +322,16 @@
         }
       }
       
-      // Create position cell
       const posCell = document.createElement('td');
       posCell.textContent = position;
       posCell.className = cells[0].className;
       posCell.style.cssText = 'text-align: center; font-weight: 600;';
       
-      // Create grade cell
       const gradeCell = document.createElement('td');
       gradeCell.textContent = grade;
       gradeCell.className = cells[0].className;
       gradeCell.style.textAlign = 'center';
       
-      // Insert after name cell
       cells[nameIndex].after(gradeCell);
       cells[nameIndex].after(posCell);
     });
@@ -303,7 +343,6 @@
     const tbody = table.querySelector('tbody');
     const rows = Array.from(tbody.querySelectorAll('tr'));
     
-    // Toggle sort direction
     const currentDir = table.dataset[`sort${columnIndex}`];
     const direction = currentDir === 'asc' ? 'desc' : 'asc';
     table.dataset[`sort${columnIndex}`] = direction;
@@ -319,11 +358,9 @@
       }
     });
     
-    // Re-append rows in new order
     rows.forEach(row => tbody.appendChild(row));
   }
   
-  // Run when page loads
   function init() {
     setTimeout(enhanceLeagueStats, 2000);
   }
@@ -334,7 +371,6 @@
     init();
   }
   
-  // Watch for pagination changes (when new tables are loaded)
   const observer = new MutationObserver((mutations) => {
     let shouldEnhance = false;
     mutations.forEach(mutation => {
