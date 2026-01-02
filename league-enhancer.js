@@ -10,8 +10,13 @@
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
     
+    isEnhancing = true;
+    
     const seasonMatch = location.href.match(/subseason=(\d+)/);
-    if (!seasonMatch) return;
+    if (!seasonMatch) {
+      isEnhancing = false;
+      return;
+    }
     
     const season = seasonMatch[1];
     
@@ -49,8 +54,12 @@
     
     if (Object.keys(allPlayerData).length === 0) {
       console.log('No roster data available');
+      isEnhancing = false;
       return;
     }
+    
+    // Wait for tables to fully load
+    await waitForTables();
     
     // Enhance all stats tables
     document.querySelectorAll('table').forEach(table => {
@@ -59,6 +68,36 @@
         enhanceTable(table, allPlayerData);
       }
     });
+    
+    isEnhancing = false;
+  }
+  
+  async function waitForTables() {
+    // Wait for table rows to have actual player data (not loading placeholders)
+    let attempts = 0;
+    const maxAttempts = 20;
+    
+    while (attempts < maxAttempts) {
+      const tables = document.querySelectorAll('table');
+      let hasPlayerLinks = false;
+      
+      tables.forEach(table => {
+        const rows = table.querySelectorAll('tbody tr');
+        rows.forEach(row => {
+          const nameCell = row.querySelector('td:nth-child(2) a[href*="roster_players"]');
+          if (nameCell) hasPlayerLinks = true;
+        });
+      });
+      
+      if (hasPlayerLinks) {
+        // Found player links, wait a bit more to ensure all are loaded
+        await new Promise(resolve => setTimeout(resolve, 300));
+        return;
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 100));
+      attempts++;
+    }
   }
   
   function showLoadingIndicator(message) {
@@ -218,6 +257,7 @@
     headers[nameIndex].after(posHeader);
     
     // Add data to rows
+    let matchedCount = 0;
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
@@ -235,6 +275,7 @@
         if (info) {
           position = info.position;
           grade = info.grade;
+          matchedCount++;
         }
       }
       
@@ -255,7 +296,7 @@
       cells[nameIndex].after(posCell);
     });
     
-    console.log('Table enhanced with Position and Grade columns');
+    console.log(`Table enhanced: ${matchedCount}/${bodyRows.length} players matched`);
   }
   
   function sortTable(table, columnIndex) {
@@ -306,8 +347,8 @@
       });
     });
     
-    if (shouldEnhance) {
-      setTimeout(enhanceLeagueStats, 500);
+    if (shouldEnhance && !isEnhancing) {
+      setTimeout(enhanceLeagueStats, 1000);
     }
   });
   
