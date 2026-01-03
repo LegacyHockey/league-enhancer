@@ -30,16 +30,18 @@
     '9113678'  // Wright County
   ];
   
+  // Detect if on mobile
+  const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  
   async function enhanceLeagueStats() {
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
     
-    // Check if we're on a new URL/tab
     const currentUrl = location.href;
     if (currentUrl === lastEnhancedUrl) return;
     
     isEnhancing = true;
-    console.log('Stats Enhancer: Starting enhancement');
+    console.log('Stats Enhancer: Starting enhancement (Mobile: ' + isMobile + ')');
     
     const seasonMatch = location.href.match(/subseason=(\d+)/);
     if (!seasonMatch) {
@@ -61,22 +63,38 @@
           allPlayerData = parsedCache.data;
         } else {
           console.log('Cache expired, fetching fresh data');
-          showLoadingIndicator('Loading all Minnesota team rosters...');
+          showLoadingIndicator('Loading Minnesota team rosters...');
+          try {
+            allPlayerData = await fetchAllMNTeamRosters(season);
+            localStorage.setItem(cacheKey, JSON.stringify({
+              data: allPlayerData,
+              timestamp: Date.now()
+            }));
+          } catch (error) {
+            console.error('Error fetching rosters:', error);
+            showLoadingIndicator('⚠️ Loading failed. Please refresh page.');
+            setTimeout(hideLoadingIndicator, 5000);
+            isEnhancing = false;
+            return;
+          }
+          hideLoadingIndicator();
+        }
+      } else {
+        console.log('No cache found, fetching roster data');
+        showLoadingIndicator('Loading Minnesota team rosters...');
+        try {
           allPlayerData = await fetchAllMNTeamRosters(season);
           localStorage.setItem(cacheKey, JSON.stringify({
             data: allPlayerData,
             timestamp: Date.now()
           }));
-          hideLoadingIndicator();
+        } catch (error) {
+          console.error('Error fetching rosters:', error);
+          showLoadingIndicator('⚠️ Loading failed. Please refresh page.');
+          setTimeout(hideLoadingIndicator, 5000);
+          isEnhancing = false;
+          return;
         }
-      } else {
-        console.log('No cache found, fetching roster data for all Minnesota teams');
-        showLoadingIndicator('Loading all Minnesota team rosters... This may take 1-2 minutes.');
-        allPlayerData = await fetchAllMNTeamRosters(season);
-        localStorage.setItem(cacheKey, JSON.stringify({
-          data: allPlayerData,
-          timestamp: Date.now()
-        }));
         hideLoadingIndicator();
       }
     }
@@ -87,15 +105,12 @@
       return;
     }
     
-    // Wait for tables to fully load
     console.log('Waiting for tables to load...');
     await waitForTables();
     console.log('Tables loaded, enhancing...');
     
-    // Filter out excluded teams and enhance tables
     filterOutOfStateTeams();
     
-    // Enhance all stats tables
     let enhanced = 0;
     document.querySelectorAll('table').forEach(table => {
       const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
@@ -111,20 +126,17 @@
   }
   
   function filterOutOfStateTeams() {
-    // Remove rows for out-of-state teams
     let hiddenCount = 0;
     document.querySelectorAll('table tbody tr').forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
       
-      // Find the Team column and check for out-of-state teams
       cells.forEach(cell => {
         const teamLink = cell.querySelector('a[href*="/page/show/"]');
         if (teamLink) {
           const teamName = teamLink.textContent.trim();
           const fullTeamName = teamLink.getAttribute('title') || '';
           
-          // Check if team is from out of state
           const outOfStateIndicators = [
             '(Wis.)', '(N.D.)', '(Ontario)', 
             'Wisconsin', 'North Dakota', 'Canada'
@@ -166,7 +178,6 @@
         });
       });
       
-      // Wait for at least 10 player links to ensure table is populated
       if (hasPlayerLinks && linkCount >= 10) {
         console.log(`Found ${linkCount} player links, waiting 800ms more...`);
         await new Promise(resolve => setTimeout(resolve, 800));
@@ -180,37 +191,44 @@
   }
   
   function showLoadingIndicator(message) {
-    const indicator = document.createElement('div');
-    indicator.id = 'roster-loading-indicator';
+    let indicator = document.getElementById('roster-loading-indicator');
+    
+    if (!indicator) {
+      indicator = document.createElement('div');
+      indicator.id = 'roster-loading-indicator';
+      indicator.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        background: #2c3e50;
+        color: white;
+        padding: 15px 25px;
+        border-radius: 6px;
+        font-size: 14px;
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 99999;
+        max-width: 300px;
+      `;
+      
+      const style = document.createElement('style');
+      style.textContent = `
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `;
+      document.head.appendChild(style);
+      document.body.appendChild(indicator);
+    }
+    
+    const showSpinner = !message.includes('⚠️');
     indicator.innerHTML = `
       <div style="display: flex; align-items: center; gap: 10px;">
-        <div style="width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite;"></div>
+        ${showSpinner ? '<div style="width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : ''}
         <span>${message}</span>
       </div>
     `;
-    indicator.style.cssText = `
-      position: fixed;
-      top: 20px;
-      right: 20px;
-      background: #2c3e50;
-      color: white;
-      padding: 15px 25px;
-      border-radius: 8px;
-      font-size: 14px;
-      font-weight: 600;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-      z-index: 99999;
-    `;
-    
-    const style = document.createElement('style');
-    style.textContent = `
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-    `;
-    document.head.appendChild(style);
-    document.body.appendChild(indicator);
   }
   
   function hideLoadingIndicator() {
@@ -240,7 +258,6 @@
         const html = await response.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // Find all team links
         const teamLinks = doc.querySelectorAll('a[href*="/page/show/"]');
         let foundTeams = 0;
         
@@ -254,80 +271,84 @@
           }
         });
         
-        console.log(`Conference ${i + 1}: Found ${foundTeams} teams`);
+        console.log(`Conference ${i + 1}/${MN_CONFERENCES.length}: Found ${foundTeams} teams`);
         
-        // Update indicator
-        const indicator = document.getElementById('roster-loading-indicator');
-        if (indicator) {
-          indicator.querySelector('span').textContent = 
-            `Scanning conferences... ${i + 1}/${MN_CONFERENCES.length} (${allTeamIds.size} teams found)`;
-        }
+        showLoadingIndicator(`Scanning conferences... ${i + 1}/${MN_CONFERENCES.length}`);
         
-        await new Promise(resolve => setTimeout(resolve, 50));
+        // Longer delay on mobile to avoid overwhelming the connection
+        await new Promise(resolve => setTimeout(resolve, isMobile ? 100 : 50));
       } catch (error) {
         console.error(`Error fetching conference ${confId}:`, error);
       }
     }
     
     console.log(`Total: Found ${allTeamIds.size} Minnesota teams`);
+    showLoadingIndicator(`Found ${allTeamIds.size} teams. Loading rosters...`);
     
-    // Now fetch rosters for all teams
+    // Fetch rosters with progress tracking
     const allData = {};
     let count = 0;
+    let errors = 0;
     
     for (const teamId of allTeamIds) {
-      const rosterData = await fetchTeamRoster(teamId, season);
-      Object.assign(allData, rosterData);
-      count++;
-      
-      const indicator = document.getElementById('roster-loading-indicator');
-      if (indicator) {
-        indicator.querySelector('span').textContent = 
-          `Loading rosters... ${count}/${allTeamIds.size} teams`;
+      try {
+        const rosterData = await fetchTeamRoster(teamId, season);
+        Object.assign(allData, rosterData);
+        count++;
+        
+        // Update progress every 5 teams to reduce UI updates
+        if (count % 5 === 0 || count === allTeamIds.size) {
+          showLoadingIndicator(`Loading rosters... ${count}/${allTeamIds.size}`);
+        }
+        
+        // Longer delay on mobile
+        await new Promise(resolve => setTimeout(resolve, isMobile ? 120 : 80));
+      } catch (error) {
+        console.error(`Error fetching team ${teamId}:`, error);
+        errors++;
+        // Continue despite errors
       }
-      
-      await new Promise(resolve => setTimeout(resolve, 80));
     }
     
-    console.log(`Fetched roster data for ${count} teams, ${Object.keys(allData).length} players`);
+    console.log(`Fetched ${count} teams, ${Object.keys(allData).length} players (${errors} errors)`);
+    
+    if (Object.keys(allData).length === 0) {
+      throw new Error('No roster data loaded');
+    }
+    
     return allData;
   }
   
   async function fetchTeamRoster(teamId, season) {
     const url = `https://www.legacy.hockey/roster/show/${teamId}?subseason=${season}`;
     
-    try {
-      const response = await fetch(url);
-      if (!response.ok) return {};
-      
-      const html = await response.text();
-      const doc = new DOMParser().parseFromString(html, 'text/html');
-      const playerMap = {};
-      
-      doc.querySelectorAll('table tbody tr').forEach(row => {
-        const cells = row.querySelectorAll('td');
-        if (cells.length >= 5) {
-          const number = cells[0]?.textContent?.trim();
-          const nameLink = cells[2]?.querySelector('a');
-          const playerIdMatch = nameLink?.href?.match(/roster_players\/(\d+)/);
-          const position = cells[3]?.textContent?.trim();
-          const grade = cells[4]?.textContent?.trim();
-          
-          if (playerIdMatch && number !== 'MGR') {
-            playerMap[playerIdMatch[1]] = {
-              number: number,
-              position: position || '',
-              grade: grade || ''
-            };
-          }
+    const response = await fetch(url);
+    if (!response.ok) return {};
+    
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const playerMap = {};
+    
+    doc.querySelectorAll('table tbody tr').forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length >= 5) {
+        const number = cells[0]?.textContent?.trim();
+        const nameLink = cells[2]?.querySelector('a');
+        const playerIdMatch = nameLink?.href?.match(/roster_players\/(\d+)/);
+        const position = cells[3]?.textContent?.trim();
+        const grade = cells[4]?.textContent?.trim();
+        
+        if (playerIdMatch && number !== 'MGR') {
+          playerMap[playerIdMatch[1]] = {
+            number: number,
+            position: position || '',
+            grade: grade || ''
+          };
         }
-      });
-      
-      return playerMap;
-    } catch (error) {
-      console.error(`Error fetching roster for team ${teamId}:`, error);
-      return {};
-    }
+      }
+    });
+    
+    return playerMap;
   }
   
   function enhanceTable(table, playerData) {
@@ -347,7 +368,6 @@
     
     if (nameIndex === -1) return;
     
-    // Check if already enhanced by looking for Pos or Grade column
     const headerTexts = Array.from(headers).map(h => h.textContent.trim());
     if (headerTexts.includes('Pos') || headerTexts.includes('Grade')) {
       console.log('Table already enhanced, skipping');
@@ -355,12 +375,9 @@
     }
     
     const sampleHeader = headers[0];
-    
-    // Check if this is a goalie table
     const isGoalieTable = headerTexts.includes('GAA') && headerTexts.includes('SV %');
     console.log(`Enhancing ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
     
-    // Only add Position column for skater tables
     if (!isGoalieTable) {
       const posHeader = document.createElement('th');
       posHeader.textContent = 'Pos';
@@ -371,7 +388,6 @@
       headers[nameIndex].after(posHeader);
     }
     
-    // Always add Grade column
     const gradeHeader = document.createElement('th');
     gradeHeader.textContent = 'Grade';
     gradeHeader.className = sampleHeader.className;
@@ -383,12 +399,10 @@
     if (isGoalieTable) {
       headers[nameIndex].after(gradeHeader);
     } else {
-      // For skater tables, insert after the Pos header we just added
       const posHeader = headers[nameIndex].nextElementSibling;
       posHeader.after(gradeHeader);
     }
     
-    // Add data to rows
     let matchedCount = 0;
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
@@ -411,7 +425,6 @@
         }
       }
       
-      // Add Position cell for skater tables only
       if (!isGoalieTable) {
         const posCell = document.createElement('td');
         posCell.textContent = position;
@@ -420,7 +433,6 @@
         cells[nameIndex].after(posCell);
       }
       
-      // Add Grade cell
       const gradeCell = document.createElement('td');
       gradeCell.textContent = grade;
       gradeCell.className = cells[0].className;
@@ -429,7 +441,6 @@
       if (isGoalieTable) {
         cells[nameIndex].after(gradeCell);
       } else {
-        // For skater tables, insert after the Pos cell we just added
         const posCell = cells[nameIndex].nextElementSibling;
         posCell.after(gradeCell);
       }
@@ -483,7 +494,6 @@
     });
     
     if (shouldEnhance && !isEnhancing) {
-      // Reset the last URL so we re-enhance for tab changes
       lastEnhancedUrl = '';
       setTimeout(enhanceLeagueStats, 1500);
     }
