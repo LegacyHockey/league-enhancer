@@ -4,6 +4,7 @@
   const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
   let allPlayerData = {};
   let isEnhancing = false;
+  let lastEnhancedUrl = '';
   
   // Teams to exclude (North Dakota schools, etc.)
   const EXCLUDED_TEAMS = ['Mayville/Portland'];
@@ -36,7 +37,12 @@
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
     
+    // Check if we're on a new URL/tab
+    const currentUrl = location.href;
+    if (currentUrl === lastEnhancedUrl) return;
+    
     isEnhancing = true;
+    console.log('Stats Enhancer: Starting enhancement');
     
     const seasonMatch = location.href.match(/subseason=(\d+)/);
     if (!seasonMatch) {
@@ -85,24 +91,31 @@
     }
     
     // Wait for tables to fully load
+    console.log('Waiting for tables to load...');
     await waitForTables();
+    console.log('Tables loaded, enhancing...');
     
     // Filter out excluded teams and enhance tables
     filterExcludedTeams();
     
     // Enhance all stats tables
+    let enhanced = 0;
     document.querySelectorAll('table').forEach(table => {
       const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
       if (headers.includes('#') && headers.includes('Name') && headers.includes('Team')) {
         enhanceTable(table, allPlayerData);
+        enhanced++;
       }
     });
     
+    console.log(`Enhanced ${enhanced} tables`);
+    lastEnhancedUrl = currentUrl;
     isEnhancing = false;
   }
   
   function filterExcludedTeams() {
     // Remove rows for excluded teams
+    let hiddenCount = 0;
     document.querySelectorAll('table tbody tr').forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
@@ -118,37 +131,48 @@
           EXCLUDED_TEAMS.forEach(excludedTeam => {
             if (teamName.includes(excludedTeam) || (fullTeamName && fullTeamName.includes(excludedTeam))) {
               row.style.display = 'none';
+              hiddenCount++;
             }
           });
         }
       });
     });
+    if (hiddenCount > 0) {
+      console.log(`Filtered out ${hiddenCount} excluded team rows`);
+    }
   }
   
   async function waitForTables() {
     let attempts = 0;
-    const maxAttempts = 25;
+    const maxAttempts = 40; // Increased from 25
     
     while (attempts < maxAttempts) {
       const tables = document.querySelectorAll('table');
       let hasPlayerLinks = false;
+      let linkCount = 0;
       
       tables.forEach(table => {
         const rows = table.querySelectorAll('tbody tr');
         rows.forEach(row => {
           const nameCell = row.querySelector('td a[href*="roster_players"]');
-          if (nameCell) hasPlayerLinks = true;
+          if (nameCell) {
+            hasPlayerLinks = true;
+            linkCount++;
+          }
         });
       });
       
-      if (hasPlayerLinks) {
-        await new Promise(resolve => setTimeout(resolve, 600));
+      // Wait for at least 10 player links to ensure table is populated
+      if (hasPlayerLinks && linkCount >= 10) {
+        console.log(`Found ${linkCount} player links, waiting 800ms more...`);
+        await new Promise(resolve => setTimeout(resolve, 800));
         return;
       }
       
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 150));
       attempts++;
     }
+    console.log('Timed out waiting for tables');
   }
   
   function showLoadingIndicator(message) {
@@ -423,7 +447,9 @@
     });
     
     if (shouldEnhance && !isEnhancing) {
-      setTimeout(enhanceLeagueStats, 1200);
+      // Reset the last URL so we re-enhance for tab changes
+      lastEnhancedUrl = '';
+      setTimeout(enhanceLeagueStats, 1500);
     }
   });
   
