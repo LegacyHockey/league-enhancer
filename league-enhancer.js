@@ -30,9 +30,6 @@
     '9113678'  // Wright County
   ];
   
-  // Out of State conference to exclude
-  const OUT_OF_STATE_CONFERENCE = '9113691';
-  
   async function enhanceLeagueStats() {
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
@@ -127,12 +124,10 @@
           const teamName = teamLink.textContent.trim();
           const fullTeamName = teamLink.getAttribute('title') || '';
           
-          // Check if team is from out of state (contains state abbreviations or country names)
+          // Check if team is from out of state
           const outOfStateIndicators = [
             '(Wis.)', '(N.D.)', '(Ontario)', 
-            'Wisconsin', 'North Dakota', 'Canada',
-            'Mayville', 'Portland', 'Fargo', 'Grand Forks',
-            'Warroad' // If Warroad is out of state, otherwise remove this
+            'Wisconsin', 'North Dakota', 'Canada'
           ];
           
           const isOutOfState = outOfStateIndicators.some(indicator => 
@@ -340,7 +335,6 @@
     const bodyRows = table.querySelectorAll('tbody tr');
     
     if (!headerRow || bodyRows.length === 0) return;
-    if (headerRow.textContent.includes('Grade')) return; // Already enhanced
     
     const headers = headerRow.querySelectorAll('th');
     let nameIndex = -1;
@@ -353,11 +347,18 @@
     
     if (nameIndex === -1) return;
     
+    // Check if already enhanced by looking for Pos or Grade column
+    const headerTexts = Array.from(headers).map(h => h.textContent.trim());
+    if (headerTexts.includes('Pos') || headerTexts.includes('Grade')) {
+      console.log('Table already enhanced, skipping');
+      return;
+    }
+    
     const sampleHeader = headers[0];
     
-    // Check if this is a goalie table (has MIN, W, L, T, SOG, GA, SV, GAA, SV %, SO columns)
-    const headerTexts = Array.from(headers).map(h => h.textContent.trim());
-    const isGoalieTable = headerTexts.includes('MIN') && headerTexts.includes('GAA') && headerTexts.includes('SV %');
+    // Check if this is a goalie table
+    const isGoalieTable = headerTexts.includes('GAA') && headerTexts.includes('SV %');
+    console.log(`Enhancing ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
     
     // Only add Position column for skater tables
     if (!isGoalieTable) {
@@ -382,8 +383,9 @@
     if (isGoalieTable) {
       headers[nameIndex].after(gradeHeader);
     } else {
-      // For skater tables, add after Position column
-      headers[nameIndex].nextElementSibling.after(gradeHeader);
+      // For skater tables, insert after the Pos header we just added
+      const posHeader = headers[nameIndex].nextElementSibling;
+      posHeader.after(gradeHeader);
     }
     
     // Add data to rows
@@ -409,7 +411,7 @@
         }
       }
       
-      // Add Position cell for skater tables
+      // Add Position cell for skater tables only
       if (!isGoalieTable) {
         const posCell = document.createElement('td');
         posCell.textContent = position;
@@ -427,7 +429,9 @@
       if (isGoalieTable) {
         cells[nameIndex].after(gradeCell);
       } else {
-        cells[nameIndex].nextElementSibling.after(gradeCell);
+        // For skater tables, insert after the Pos cell we just added
+        const posCell = cells[nameIndex].nextElementSibling;
+        posCell.after(gradeCell);
       }
     });
     
