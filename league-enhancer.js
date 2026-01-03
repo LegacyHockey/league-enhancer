@@ -33,6 +33,11 @@
   // Detect if on mobile
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
+  // Mobile-specific settings
+  const MOBILE_BATCH_SIZE = 3; // Process fewer teams at once on mobile
+  const MOBILE_DELAY = 200; // Longer delays between requests on mobile
+  const MOBILE_TIMEOUT = 8000; // 8 second timeout for mobile requests
+  
   async function enhanceLeagueStats() {
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
@@ -57,27 +62,39 @@
       const cached = localStorage.getItem(cacheKey);
       
       if (cached) {
-        const parsedCache = JSON.parse(cached);
-        if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
-          console.log('Using cached league roster data');
-          allPlayerData = parsedCache.data;
-        } else {
-          console.log('Cache expired, fetching fresh data');
-          showLoadingIndicator('Loading Minnesota team rosters...');
-          try {
-            allPlayerData = await fetchAllMNTeamRosters(season);
-            localStorage.setItem(cacheKey, JSON.stringify({
-              data: allPlayerData,
-              timestamp: Date.now()
-            }));
-          } catch (error) {
-            console.error('Error fetching rosters:', error);
-            showLoadingIndicator('⚠️ Loading failed. Please refresh page.');
-            setTimeout(hideLoadingIndicator, 5000);
-            isEnhancing = false;
-            return;
+        try {
+          const parsedCache = JSON.parse(cached);
+          if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
+            console.log('Using cached league roster data');
+            allPlayerData = parsedCache.data;
+          } else {
+            console.log('Cache expired, fetching fresh data');
+            showLoadingIndicator('Loading Minnesota team rosters...');
+            try {
+              allPlayerData = await fetchAllMNTeamRosters(season);
+              localStorage.setItem(cacheKey, JSON.stringify({
+                data: allPlayerData,
+                timestamp: Date.now()
+              }));
+              hideLoadingIndicator();
+            } catch (error) {
+              console.error('Error fetching rosters:', error);
+              showErrorMessage('Could not load roster data. Using cached data if available.');
+              // Try to use expired cache rather than failing completely
+              if (parsedCache && parsedCache.data) {
+                allPlayerData = parsedCache.data;
+                hideLoadingIndicator();
+              } else {
+                isEnhancing = false;
+                return;
+              }
+            }
           }
-          hideLoadingIndicator();
+        } catch (e) {
+          console.error('Error parsing cache:', e);
+          localStorage.removeItem(cacheKey);
+          isEnhancing = false;
+          return;
         }
       } else {
         console.log('No cache found, fetching roster data');
@@ -88,14 +105,13 @@
             data: allPlayerData,
             timestamp: Date.now()
           }));
+          hideLoadingIndicator();
         } catch (error) {
           console.error('Error fetching rosters:', error);
-          showLoadingIndicator('⚠️ Loading failed. Please refresh page.');
-          setTimeout(hideLoadingIndicator, 5000);
+          showErrorMessage('Failed to load roster data. Please try refreshing the page.');
           isEnhancing = false;
           return;
         }
-        hideLoadingIndicator();
       }
     }
     
@@ -199,16 +215,16 @@
       indicator.style.cssText = `
         position: fixed;
         top: 20px;
-        right: 20px;
+        ${isMobile ? 'left: 50%; transform: translateX(-50%);' : 'right: 20px;'}
         background: #2c3e50;
         color: white;
-        padding: 15px 25px;
+        padding: ${isMobile ? '12px 20px' : '15px 25px'};
         border-radius: 6px;
-        font-size: 14px;
+        font-size: ${isMobile ? '13px' : '14px'};
         font-weight: 600;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         z-index: 99999;
-        max-width: 300px;
+        max-width: ${isMobile ? '90%' : '300px'};
       `;
       
       const style = document.createElement('style');
@@ -222,13 +238,18 @@
       document.body.appendChild(indicator);
     }
     
-    const showSpinner = !message.includes('⚠️');
+    const showSpinner = !message.includes('⚠️') && !message.includes('Could not');
     indicator.innerHTML = `
       <div style="display: flex; align-items: center; gap: 10px;">
-        ${showSpinner ? '<div style="width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : ''}
-        <span>${message}</span>
+        ${showSpinner ? '<div style="width: 18px; height: 18px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : ''}
+        <span style="font-size: ${isMobile ? '12px' : '14px'};">${message}</span>
       </div>
     `;
+  }
+  
+  function showErrorMessage(message) {
+    showLoadingIndicator('⚠️ ' + message);
+    setTimeout(hideLoadingIndicator, 7000);
   }
   
   function hideLoadingIndicator() {
@@ -240,46 +261,78 @@
     }
   }
   
+  // Fetch with timeout wrapper
+  async function fetchWithTimeout(url, timeout = isMobile ? MOBILE_TIMEOUT : 5000) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout');
+      }
+      throw error;
+    }
+  }
+  
   async function fetchAllMNTeamRosters(season) {
     const allTeamIds = new Set();
     
     // Fetch team IDs from each Minnesota conference
-    for (let i = 0; i < MN_CONFERENCES.length; i++) {
-      const confId = MN_CONFERENCES[i];
-      const url = `https://www.legacy.hockey/page/show/${confId}?subseason=${season}`;
+    const batchSize = isMobile ? 5 : 10; // Process fewer conferences at once on mobile
+    
+    for (let i = 0; i < MN_CONFERENCES.length; i += batchSize) {
+      const batch = MN_CONFERENCES.slice(i, i + batchSize);
       
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          console.warn(`Failed to fetch conference ${confId}`);
-          continue;
-        }
+      // Process conferences in parallel batches
+      await Promise.all(batch.map(async (confId) => {
+        const url = `https://www.legacy.hockey/page/show/${confId}?subseason=${season}`;
         
-        const html = await response.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        
-        const teamLinks = doc.querySelectorAll('a[href*="/page/show/"]');
-        let foundTeams = 0;
-        
-        teamLinks.forEach(link => {
-          if (link.href.includes(`subseason=${season}`)) {
-            const match = link.href.match(/page\/show\/(\d+)/);
-            if (match && match[1] !== confId) {
-              allTeamIds.add(match[1]);
-              foundTeams++;
-            }
+        try {
+          const response = await fetchWithTimeout(url);
+          if (!response.ok) {
+            console.warn(`Failed to fetch conference ${confId}`);
+            return;
           }
-        });
-        
-        console.log(`Conference ${i + 1}/${MN_CONFERENCES.length}: Found ${foundTeams} teams`);
-        
-        showLoadingIndicator(`Scanning conferences... ${i + 1}/${MN_CONFERENCES.length}`);
-        
-        // Longer delay on mobile to avoid overwhelming the connection
-        await new Promise(resolve => setTimeout(resolve, isMobile ? 100 : 50));
-      } catch (error) {
-        console.error(`Error fetching conference ${confId}:`, error);
+          
+          const html = await response.text();
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          
+          const teamLinks = doc.querySelectorAll('a[href*="/page/show/"]');
+          let foundTeams = 0;
+          
+          teamLinks.forEach(link => {
+            if (link.href.includes(`subseason=${season}`)) {
+              const match = link.href.match(/page\/show\/(\d+)/);
+              if (match && match[1] !== confId) {
+                allTeamIds.add(match[1]);
+                foundTeams++;
+              }
+            }
+          });
+          
+          console.log(`Conference ${i + batch.indexOf(confId) + 1}/${MN_CONFERENCES.length}: Found ${foundTeams} teams`);
+        } catch (error) {
+          console.error(`Error fetching conference ${confId}:`, error.message);
+          // Continue with other conferences
+        }
+      }));
+      
+      const progress = Math.min(i + batchSize, MN_CONFERENCES.length);
+      showLoadingIndicator(`Scanning conferences... ${progress}/${MN_CONFERENCES.length}`);
+      
+      // Small delay between batches
+      if (i + batchSize < MN_CONFERENCES.length) {
+        await new Promise(resolve => setTimeout(resolve, isMobile ? 150 : 50));
       }
+    }
+    
+    if (allTeamIds.size === 0) {
+      throw new Error('No teams found in conferences');
     }
     
     console.log(`Total: Found ${allTeamIds.size} Minnesota teams`);
@@ -287,33 +340,47 @@
     
     // Fetch rosters with progress tracking
     const allData = {};
-    let count = 0;
-    let errors = 0;
+    const teamArray = Array.from(allTeamIds);
+    const teamBatchSize = isMobile ? MOBILE_BATCH_SIZE : 5;
+    let successCount = 0;
+    let errorCount = 0;
     
-    for (const teamId of allTeamIds) {
-      try {
-        const rosterData = await fetchTeamRoster(teamId, season);
-        Object.assign(allData, rosterData);
-        count++;
-        
-        // Update progress every 5 teams to reduce UI updates
-        if (count % 5 === 0 || count === allTeamIds.size) {
-          showLoadingIndicator(`Loading rosters... ${count}/${allTeamIds.size}`);
+    for (let i = 0; i < teamArray.length; i += teamBatchSize) {
+      const batch = teamArray.slice(i, i + teamBatchSize);
+      
+      // Process teams in parallel batches
+      const results = await Promise.allSettled(
+        batch.map(teamId => fetchTeamRoster(teamId, season))
+      );
+      
+      results.forEach((result, idx) => {
+        if (result.status === 'fulfilled' && result.value) {
+          Object.assign(allData, result.value);
+          successCount++;
+        } else {
+          console.error(`Error fetching team ${batch[idx]}:`, result.reason?.message || 'Unknown error');
+          errorCount++;
         }
-        
-        // Longer delay on mobile
-        await new Promise(resolve => setTimeout(resolve, isMobile ? 120 : 80));
-      } catch (error) {
-        console.error(`Error fetching team ${teamId}:`, error);
-        errors++;
-        // Continue despite errors
+      });
+      
+      const progress = Math.min(i + teamBatchSize, teamArray.length);
+      showLoadingIndicator(`Loading rosters... ${progress}/${teamArray.length}`);
+      
+      // Delay between batches (longer on mobile)
+      if (i + teamBatchSize < teamArray.length) {
+        await new Promise(resolve => setTimeout(resolve, isMobile ? MOBILE_DELAY : 100));
       }
     }
     
-    console.log(`Fetched ${count} teams, ${Object.keys(allData).length} players (${errors} errors)`);
+    console.log(`Fetched ${successCount}/${teamArray.length} teams successfully, ${Object.keys(allData).length} players total (${errorCount} errors)`);
     
+    // Accept partial data if we got at least 50% of teams
     if (Object.keys(allData).length === 0) {
       throw new Error('No roster data loaded');
+    }
+    
+    if (successCount < teamArray.length * 0.5) {
+      console.warn(`Only ${successCount}/${teamArray.length} teams loaded successfully`);
     }
     
     return allData;
@@ -322,7 +389,7 @@
   async function fetchTeamRoster(teamId, season) {
     const url = `https://www.legacy.hockey/roster/show/${teamId}?subseason=${season}`;
     
-    const response = await fetch(url);
+    const response = await fetchWithTimeout(url);
     if (!response.ok) return {};
     
     const html = await response.text();
