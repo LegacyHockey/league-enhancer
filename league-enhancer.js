@@ -290,6 +290,42 @@
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const playerMap = {};
       
+      // Extract team name from the page (school name only, no mascot)
+      let teamName = '';
+      const titleElement = doc.querySelector('h1.page-title, h1, .team-name');
+      if (titleElement) {
+        teamName = titleElement.textContent.trim();
+        // Remove "Roster" or year info if present
+        teamName = teamName.replace(/\s*Roster\s*/i, '').replace(/\s*\d{4}-\d{4}\s*/, '').trim();
+        
+        // Extract just the school name (first word or first two words before mascot)
+        // Common patterns: "Edina Hornets", "Minnetonka Skippers", "Eden Prairie Eagles"
+        // We want just "Edina", "Minnetonka", "Eden Prairie"
+        
+        // List of common mascot names to remove
+        const mascots = [
+          'Hornets', 'Skippers', 'Eagles', 'Hawks', 'Huskies', 'Panthers', 'Trojans',
+          'Crimson', 'Knights', 'Royals', 'Bengals', 'Cougars', 'Spartans', 'Wildcats',
+          'Tigers', 'Lions', 'Warriors', 'Saints', 'Rangers', 'Pirates', 'Bobcats',
+          'Jaguars', 'Mustangs', 'Bulldogs', 'Cardinals', 'Raiders', 'Grizzlies', 'Bears',
+          'Sabers', 'Sabres', 'Minutemen', 'Thunder', 'Storm', 'Lightning', 'Bolts',
+          'Greyhounds', 'Ponies', 'Flyers', 'Rovers', 'Orioles', 'Blue Jags', 'Blaze'
+        ];
+        
+        // Try to remove mascot name
+        for (const mascot of mascots) {
+          const regex = new RegExp('\\s+' + mascot + '\\b.*$', 'i');
+          if (regex.test(teamName)) {
+            teamName = teamName.replace(regex, '').trim();
+            break;
+          }
+        }
+        
+        // Also remove any grade/level indicators like "Bantam AA", "Peewee A", etc.
+        teamName = teamName.replace(/\s+(Bantam|Peewee|Squirt|Midget|U\d+|Varsity|JV)\s+[A-Z]+\s*$/i, '').trim();
+        teamName = teamName.replace(/\s+(Bantam|Peewee|Squirt|Midget|U\d+|Varsity|JV)\s*$/i, '').trim();
+      }
+      
       doc.querySelectorAll('table tbody tr').forEach(row => {
         const cells = row.querySelectorAll('td');
         if (cells.length >= 5) {
@@ -303,7 +339,9 @@
             playerMap[playerIdMatch[1]] = {
               number: number,
               position: position || '',
-              grade: grade || ''
+              grade: grade || '',
+              teamName: teamName,
+              teamId: teamId
             };
           }
         }
@@ -327,10 +365,15 @@
     
     const headers = headerRow.querySelectorAll('th');
     let nameIndex = -1;
+    let teamIndex = -1;
     
     headers.forEach((header, index) => {
-      if (header.textContent.trim() === 'Name') {
+      const headerText = header.textContent.trim();
+      if (headerText === 'Name') {
         nameIndex = index;
+      }
+      if (headerText === 'Team') {
+        teamIndex = index;
       }
     });
     
@@ -372,6 +415,8 @@
     }
     
     let matchedCount = 0;
+    let teamNamesReplaced = 0;
+    
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
@@ -382,6 +427,7 @@
       
       let position = '';
       let grade = '';
+      let teamName = '';
       
       if (playerIdMatch) {
         const playerId = playerIdMatch[1];
@@ -389,7 +435,30 @@
         if (info) {
           position = info.position;
           grade = info.grade;
+          teamName = info.teamName;
           matchedCount++;
+        }
+      }
+      
+      // Replace team abbreviation with full name if we have it
+      if (teamIndex !== -1 && teamName) {
+        const teamCell = cells[teamIndex];
+        const teamLink = teamCell?.querySelector('a');
+        
+        if (teamLink) {
+          const currentText = teamLink.textContent.trim();
+          // Only replace if current text looks like an abbreviation (short)
+          if (currentText.length <= 10) {
+            // Truncate long team names
+            const maxLength = isMobile ? 20 : 30;
+            const displayName = teamName.length > maxLength 
+              ? teamName.substring(0, maxLength - 3) + '...'
+              : teamName;
+            
+            teamLink.textContent = displayName;
+            teamLink.title = teamName; // Show full name on hover
+            teamNamesReplaced++;
+          }
         }
       }
       
@@ -414,7 +483,7 @@
       }
     });
     
-    console.log(`Table enhanced (${isGoalieTable ? 'Goalie' : 'Skater'}): ${matchedCount}/${bodyRows.length} players matched`);
+    console.log(`Table enhanced (${isGoalieTable ? 'Goalie' : 'Skater'}): ${matchedCount}/${bodyRows.length} players matched, ${teamNamesReplaced} team names replaced`);
   }
   
   function sortTable(table, columnIndex) {
