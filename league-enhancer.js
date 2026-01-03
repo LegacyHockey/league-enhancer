@@ -6,9 +6,6 @@
   let isEnhancing = false;
   let lastEnhancedUrl = '';
   
-  // Teams to exclude (North Dakota schools, etc.)
-  const EXCLUDED_TEAMS = ['Mayville/Portland'];
-  
   // All Minnesota conference page IDs (excluding Out of State)
   const MN_CONFERENCES = [
     '9113382', // Big 9
@@ -33,6 +30,9 @@
     '9113678'  // Wright County
   ];
   
+  // Out of State conference to exclude
+  const OUT_OF_STATE_CONFERENCE = '9113691';
+  
   async function enhanceLeagueStats() {
     if (!location.href.includes('league_instance')) return;
     if (isEnhancing) return;
@@ -54,7 +54,7 @@
     
     // Load data if not already loaded
     if (Object.keys(allPlayerData).length === 0) {
-      const cacheKey = `league_mn_v2_${season}`;
+      const cacheKey = `league_mn_v3_${season}`;
       const cached = localStorage.getItem(cacheKey);
       
       if (cached) {
@@ -96,7 +96,7 @@
     console.log('Tables loaded, enhancing...');
     
     // Filter out excluded teams and enhance tables
-    filterExcludedTeams();
+    filterOutOfStateTeams();
     
     // Enhance all stats tables
     let enhanced = 0;
@@ -113,38 +113,47 @@
     isEnhancing = false;
   }
   
-  function filterExcludedTeams() {
-    // Remove rows for excluded teams
+  function filterOutOfStateTeams() {
+    // Remove rows for out-of-state teams
     let hiddenCount = 0;
     document.querySelectorAll('table tbody tr').forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
       
-      // Find the Team column
+      // Find the Team column and check for out-of-state teams
       cells.forEach(cell => {
         const teamLink = cell.querySelector('a[href*="/page/show/"]');
         if (teamLink) {
           const teamName = teamLink.textContent.trim();
-          const fullTeamName = teamLink.getAttribute('title');
+          const fullTeamName = teamLink.getAttribute('title') || '';
           
-          // Check if team should be excluded
-          EXCLUDED_TEAMS.forEach(excludedTeam => {
-            if (teamName.includes(excludedTeam) || (fullTeamName && fullTeamName.includes(excludedTeam))) {
-              row.style.display = 'none';
-              hiddenCount++;
-            }
-          });
+          // Check if team is from out of state (contains state abbreviations or country names)
+          const outOfStateIndicators = [
+            '(Wis.)', '(N.D.)', '(Ontario)', 
+            'Wisconsin', 'North Dakota', 'Canada',
+            'Mayville', 'Portland', 'Fargo', 'Grand Forks',
+            'Warroad' // If Warroad is out of state, otherwise remove this
+          ];
+          
+          const isOutOfState = outOfStateIndicators.some(indicator => 
+            teamName.includes(indicator) || fullTeamName.includes(indicator)
+          );
+          
+          if (isOutOfState) {
+            row.style.display = 'none';
+            hiddenCount++;
+          }
         }
       });
     });
     if (hiddenCount > 0) {
-      console.log(`Filtered out ${hiddenCount} excluded team rows`);
+      console.log(`Filtered out ${hiddenCount} out-of-state team rows`);
     }
   }
   
   async function waitForTables() {
     let attempts = 0;
-    const maxAttempts = 40; // Increased from 25
+    const maxAttempts = 40;
     
     while (attempts < maxAttempts) {
       const tables = document.querySelectorAll('table');
@@ -236,7 +245,7 @@
         const html = await response.text();
         const doc = new DOMParser().parseFromString(html, 'text/html');
         
-        // Find all team links - try multiple selectors
+        // Find all team links
         const teamLinks = doc.querySelectorAll('a[href*="/page/show/"]');
         let foundTeams = 0;
         
@@ -331,7 +340,7 @@
     const bodyRows = table.querySelectorAll('tbody tr');
     
     if (!headerRow || bodyRows.length === 0) return;
-    if (headerRow.textContent.includes('Pos')) return;
+    if (headerRow.textContent.includes('Grade')) return; // Already enhanced
     
     const headers = headerRow.querySelectorAll('th');
     let nameIndex = -1;
@@ -346,23 +355,38 @@
     
     const sampleHeader = headers[0];
     
-    const posHeader = document.createElement('th');
-    posHeader.textContent = 'Pos';
-    posHeader.className = sampleHeader.className;
-    posHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
-    posHeader.title = 'Sort by Position (sorts current page only)';
-    posHeader.onclick = () => sortTable(table, nameIndex + 1);
+    // Check if this is a goalie table (has MIN, W, L, T, SOG, GA, SV, GAA, SV %, SO columns)
+    const headerTexts = Array.from(headers).map(h => h.textContent.trim());
+    const isGoalieTable = headerTexts.includes('MIN') && headerTexts.includes('GAA') && headerTexts.includes('SV %');
     
+    // Only add Position column for skater tables
+    if (!isGoalieTable) {
+      const posHeader = document.createElement('th');
+      posHeader.textContent = 'Pos';
+      posHeader.className = sampleHeader.className;
+      posHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
+      posHeader.title = 'Sort by Position (sorts current page only)';
+      posHeader.onclick = () => sortTable(table, nameIndex + 1);
+      headers[nameIndex].after(posHeader);
+    }
+    
+    // Always add Grade column
     const gradeHeader = document.createElement('th');
     gradeHeader.textContent = 'Grade';
     gradeHeader.className = sampleHeader.className;
     gradeHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
     gradeHeader.title = 'Sort by Grade (sorts current page only)';
-    gradeHeader.onclick = () => sortTable(table, nameIndex + 2);
+    const gradeColumnIndex = isGoalieTable ? nameIndex + 1 : nameIndex + 2;
+    gradeHeader.onclick = () => sortTable(table, gradeColumnIndex);
     
-    headers[nameIndex].after(gradeHeader);
-    headers[nameIndex].after(posHeader);
+    if (isGoalieTable) {
+      headers[nameIndex].after(gradeHeader);
+    } else {
+      // For skater tables, add after Position column
+      headers[nameIndex].nextElementSibling.after(gradeHeader);
+    }
     
+    // Add data to rows
     let matchedCount = 0;
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
@@ -385,21 +409,29 @@
         }
       }
       
-      const posCell = document.createElement('td');
-      posCell.textContent = position;
-      posCell.className = cells[0].className;
-      posCell.style.cssText = 'text-align: center; font-weight: 600;';
+      // Add Position cell for skater tables
+      if (!isGoalieTable) {
+        const posCell = document.createElement('td');
+        posCell.textContent = position;
+        posCell.className = cells[0].className;
+        posCell.style.cssText = 'text-align: center; font-weight: 600;';
+        cells[nameIndex].after(posCell);
+      }
       
+      // Add Grade cell
       const gradeCell = document.createElement('td');
       gradeCell.textContent = grade;
       gradeCell.className = cells[0].className;
       gradeCell.style.textAlign = 'center';
       
-      cells[nameIndex].after(gradeCell);
-      cells[nameIndex].after(posCell);
+      if (isGoalieTable) {
+        cells[nameIndex].after(gradeCell);
+      } else {
+        cells[nameIndex].nextElementSibling.after(gradeCell);
+      }
     });
     
-    console.log(`Table enhanced: ${matchedCount}/${bodyRows.length} players matched`);
+    console.log(`Table enhanced (${isGoalieTable ? 'Goalie' : 'Skater'}): ${matchedCount}/${bodyRows.length} players matched`);
   }
   
   function sortTable(table, columnIndex) {
