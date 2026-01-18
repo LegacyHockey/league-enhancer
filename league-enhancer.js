@@ -15,7 +15,7 @@
     const currentUrl = location.href;
     
     isEnhancing = true;
-    console.log('Stats Enhancer: Checking for tables to enhance (Mobile: ' + isMobile + ')');
+    console.log('Stats Enhancer: Starting enhancement (Mobile: ' + isMobile + ')');
     
     const seasonMatch = location.href.match(/subseason=(\d+)/);
     if (!seasonMatch) {
@@ -56,7 +56,7 @@
       return;
     }
     
-    console.log(`Found ${tables.length} new tables to enhance (${allTables.length} total tables)`);
+    console.log(`Found ${tables.length} new tables to enhance`);
     
     // Filter out-of-state teams only from stats tables
     tables.forEach(table => filterOutOfStateTeams(table));
@@ -90,7 +90,6 @@
     
     if (teamIds.size === 0) {
       console.log('No teams found');
-      // Still mark tables as enhanced even if no teams
       tables.forEach(table => {
         table.setAttribute('data-enhanced', 'true');
       });
@@ -98,13 +97,32 @@
       return;
     }
     
-    // Show loading indicator
-    showLoadingIndicator(`Loading position/grade data for ${teamIds.size} teams...`);
+    // Check how many teams are already cached
+    let cachedTeamCount = 0;
+    for (const teamId of teamIds) {
+      const cacheKey = `team_${teamId}_${season}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsedCache = JSON.parse(cached);
+        if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
+          cachedTeamCount++;
+        }
+      }
+    }
+    
+    const needsToFetch = cachedTeamCount < teamIds.size;
+    console.log(`${cachedTeamCount}/${teamIds.size} teams cached, ${needsToFetch ? 'will fetch new data' : 'all cached'}`);
+    
+    // Only show loading indicator if we need to fetch new data
+    if (needsToFetch) {
+      showLoadingIndicator(`Loading data for ${teamIds.size - cachedTeamCount} teams...`);
+    }
     
     // Fetch roster data for only these teams
     const playerData = {};
     let loadedCount = 0;
     let failedCount = 0;
+    let fetchedCount = 0;
     
     for (const teamId of teamIds) {
       try {
@@ -125,6 +143,7 @@
         if (!teamRoster) {
           console.log(`Fetching roster for team ${teamId}`);
           teamRoster = await fetchTeamRoster(teamId, season);
+          fetchedCount++;
           
           // Cache it
           try {
@@ -138,24 +157,26 @@
           
           // Small delay between fetches to avoid overwhelming mobile connections
           await new Promise(resolve => setTimeout(resolve, isMobile ? 100 : 30));
+          
+          // Update progress only if showing indicator
+          if (needsToFetch && fetchedCount % 2 === 0) {
+            showLoadingIndicator(`Loading data... ${fetchedCount}/${teamIds.size - cachedTeamCount} teams`);
+          }
         }
         
         Object.assign(playerData, teamRoster);
         loadedCount++;
-        
-        // Update progress
-        if (loadedCount % 3 === 0 || loadedCount === teamIds.size) {
-          showLoadingIndicator(`Loading data... ${loadedCount}/${teamIds.size} teams`);
-        }
       } catch (error) {
         console.error(`Failed to fetch team ${teamId}:`, error.message);
         failedCount++;
       }
     }
     
-    hideLoadingIndicator();
+    if (needsToFetch) {
+      hideLoadingIndicator();
+    }
     
-    console.log(`Loaded ${loadedCount} teams, failed ${failedCount}, total ${Object.keys(playerData).length} players`);
+    console.log(`Loaded ${loadedCount} teams (${cachedTeamCount} cached, ${fetchedCount} fetched), failed ${failedCount}, total ${Object.keys(playerData).length} players`);
     
     // Even if some teams failed, enhance with what we have
     if (Object.keys(playerData).length > 0) {
@@ -167,8 +188,9 @@
       console.log(`Enhanced ${tables.length} tables`);
     } else {
       console.log('No player data available to enhance tables');
-      showErrorMessage('Could not load any team data');
-      // Still mark as enhanced to avoid trying again
+      if (needsToFetch) {
+        showErrorMessage('Could not load any team data');
+      }
       tables.forEach(table => {
         table.setAttribute('data-enhanced', 'true');
       });
