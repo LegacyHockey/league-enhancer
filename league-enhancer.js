@@ -50,6 +50,11 @@
     
     console.log(`Found ${tables.length} tables to enhance`);
     
+    // OPTIMIZATION: Replace team names first (doesn't require any fetching)
+    tables.forEach(table => {
+      replaceTeamNames(table);
+    });
+    
     // Collect all unique team IDs from visible players
     const teamIds = new Set();
     tables.forEach(table => {
@@ -79,7 +84,7 @@
     }
     
     // Show loading indicator
-    showLoadingIndicator(`Loading data for ${teamIds.size} teams...`);
+    showLoadingIndicator(`Loading position/grade data for ${teamIds.size} teams...`);
     
     // Fetch roster data for only these teams
     const playerData = {};
@@ -117,7 +122,7 @@
           }
           
           // Small delay between fetches to avoid overwhelming mobile connections
-          await new Promise(resolve => setTimeout(resolve, isMobile ? 150 : 50));
+          await new Promise(resolve => setTimeout(resolve, isMobile ? 100 : 30));
         }
         
         Object.assign(playerData, teamRoster);
@@ -140,7 +145,7 @@
     // Even if some teams failed, enhance with what we have
     if (Object.keys(playerData).length > 0) {
       tables.forEach(table => {
-        enhanceTable(table, playerData);
+        addPositionAndGrade(table, playerData);
       });
       console.log(`Enhanced ${tables.length} tables`);
     } else {
@@ -188,6 +193,65 @@
     if (hiddenCount > 0) {
       console.log(`Filtered out ${hiddenCount} out-of-state team rows from stats table`);
     }
+  }
+  
+  // NEW: Separate function to just replace team names (fast, no fetching needed)
+  function replaceTeamNames(table) {
+    const headerRow = table.querySelector('thead tr');
+    const bodyRows = table.querySelectorAll('tbody tr');
+    
+    if (!headerRow || bodyRows.length === 0) return;
+    
+    const headers = headerRow.querySelectorAll('th');
+    let teamIndex = -1;
+    
+    headers.forEach((header, index) => {
+      if (header.textContent.trim() === 'Team') {
+        teamIndex = index;
+      }
+    });
+    
+    if (teamIndex === -1) return;
+    
+    let teamNamesReplaced = 0;
+    
+    bodyRows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length === 0) return;
+      
+      const teamCell = cells[teamIndex];
+      const teamLink = teamCell?.querySelector('a');
+      
+      if (teamLink) {
+        const fullTeamName = teamLink.getAttribute('title');
+        
+        if (fullTeamName) {
+          // Use the full team name from the title
+          teamLink.textContent = fullTeamName;
+          
+          // Apply proper overflow styling to both the cell and the link
+          teamCell.style.cssText = `
+            max-width: ${isMobile ? '100px' : '180px'};
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            padding-left: 8px;
+            padding-right: 8px;
+          `;
+          
+          teamLink.style.cssText = `
+            display: block;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+          `;
+          
+          teamNamesReplaced++;
+        }
+      }
+    });
+    
+    console.log(`Replaced ${teamNamesReplaced} team names`);
   }
   
   async function waitForTables() {
@@ -281,7 +345,7 @@
     const url = `https://www.legacy.hockey/roster/show/${teamId}?subseason=${season}`;
     
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), isMobile ? 10000 : 5000);
+    const timeout = setTimeout(() => controller.abort(), isMobile ? 8000 : 4000);
     
     try {
       const response = await fetch(url, { signal: controller.signal });
@@ -324,7 +388,8 @@
     }
   }
   
-  function enhanceTable(table, playerData) {
+  // RENAMED: This now only adds position and grade columns
+  function addPositionAndGrade(table, playerData) {
     const headerRow = table.querySelector('thead tr');
     const bodyRows = table.querySelectorAll('tbody tr');
     
@@ -332,15 +397,11 @@
     
     const headers = headerRow.querySelectorAll('th');
     let nameIndex = -1;
-    let teamIndex = -1;
     
     headers.forEach((header, index) => {
       const headerText = header.textContent.trim();
       if (headerText === 'Name') {
         nameIndex = index;
-      }
-      if (headerText === 'Team') {
-        teamIndex = index;
       }
     });
     
@@ -354,7 +415,7 @@
     
     const sampleHeader = headers[0];
     const isGoalieTable = headerTexts.includes('GAA') && headerTexts.includes('SV %');
-    console.log(`Enhancing ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
+    console.log(`Adding position/grade columns to ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
     
     if (!isGoalieTable) {
       const posHeader = document.createElement('th');
@@ -382,7 +443,6 @@
     }
     
     let matchedCount = 0;
-    let teamNamesReplaced = 0;
     
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
@@ -402,31 +462,6 @@
           position = info.position;
           grade = info.grade;
           matchedCount++;
-        }
-      }
-      
-      // Replace team abbreviation with full name from title attribute
-      if (teamIndex !== -1) {
-        const teamCell = cells[teamIndex];
-        const teamLink = teamCell?.querySelector('a');
-        
-        if (teamLink) {
-          const fullTeamName = teamLink.getAttribute('title');
-          
-          if (fullTeamName) {
-            // Use the full team name from the title
-            teamLink.textContent = fullTeamName;
-            
-            // Add ellipsis styling if needed
-            teamCell.style.cssText = `
-              max-width: ${isMobile ? '120px' : '200px'};
-              overflow: hidden;
-              text-overflow: ellipsis;
-              white-space: nowrap;
-            `;
-            
-            teamNamesReplaced++;
-          }
         }
       }
       
@@ -451,7 +486,7 @@
       }
     });
     
-    console.log(`Table enhanced (${isGoalieTable ? 'Goalie' : 'Skater'}): ${matchedCount}/${bodyRows.length} players matched, ${teamNamesReplaced} team names replaced`);
+    console.log(`Added position/grade to ${matchedCount}/${bodyRows.length} players`);
   }
   
   function sortTable(table, columnIndex) {
