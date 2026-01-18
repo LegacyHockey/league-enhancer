@@ -5,9 +5,6 @@
   let isEnhancing = false;
   let lastEnhancedUrl = '';
   
-  // Track enhanced pages in this session
-  const enhancedPagesThisSession = new Set();
-  
   // Detect if on mobile
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
   
@@ -17,13 +14,6 @@
     
     const currentUrl = location.href;
     if (currentUrl === lastEnhancedUrl) return;
-    
-    // Check if we've already enhanced this exact URL in this session
-    if (enhancedPagesThisSession.has(currentUrl)) {
-      console.log('Page already enhanced in this session, skipping');
-      lastEnhancedUrl = currentUrl;
-      return;
-    }
     
     isEnhancing = true;
     console.log('Stats Enhancer: Starting on-demand enhancement (Mobile: ' + isMobile + ')');
@@ -61,14 +51,13 @@
     console.log(`Found ${tables.length} tables to enhance`);
     
     // Check if tables are already enhanced (has Pos or Grade columns)
-    const alreadyEnhanced = tables.some(table => {
+    const alreadyEnhanced = tables.every(table => {
       const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
       return headers.includes('Pos') || headers.includes('Grade');
     });
     
     if (alreadyEnhanced) {
       console.log('Tables already enhanced, skipping');
-      enhancedPagesThisSession.add(currentUrl);
       lastEnhancedUrl = currentUrl;
       isEnhancing = false;
       return;
@@ -177,8 +166,6 @@
       showErrorMessage('Could not load any team data');
     }
     
-    // Mark this page as enhanced in this session
-    enhancedPagesThisSession.add(currentUrl);
     lastEnhancedUrl = currentUrl;
     isEnhancing = false;
   }
@@ -276,14 +263,18 @@
         const fullTeamName = teamLink.getAttribute('title');
         
         if (fullTeamName) {
-          // Use the full team name from the title
-          teamLink.textContent = fullTeamName;
-          
-          // Add classes for overflow handling
-          teamCell.classList.add('team-cell-overflow');
-          teamLink.classList.add('team-link-overflow');
-          
-          teamNamesReplaced++;
+          // Check if it's already been replaced (not an abbreviation)
+          const currentText = teamLink.textContent.trim();
+          if (currentText.length <= 10) {
+            // Use the full team name from the title
+            teamLink.textContent = fullTeamName;
+            
+            // Add classes for overflow handling
+            teamCell.classList.add('team-cell-overflow');
+            teamLink.classList.add('team-link-overflow');
+            
+            teamNamesReplaced++;
+          }
         }
       }
     });
