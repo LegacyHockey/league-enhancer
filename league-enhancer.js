@@ -13,10 +13,9 @@
     if (isEnhancing) return;
     
     const currentUrl = location.href;
-    if (currentUrl === lastEnhancedUrl) return;
     
     isEnhancing = true;
-    console.log('Stats Enhancer: Starting on-demand enhancement (Mobile: ' + isMobile + ')');
+    console.log('Stats Enhancer: Checking for tables to enhance (Mobile: ' + isMobile + ')');
     
     const seasonMatch = location.href.match(/subseason=(\d+)/);
     if (!seasonMatch) {
@@ -31,44 +30,43 @@
     console.log('Tables loaded');
     
     // Find all tables that need enhancement
-    const tables = [];
+    const allTables = [];
     document.querySelectorAll('table').forEach(table => {
       const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
       if (headers.includes('#') && headers.includes('Name') && headers.includes('Team')) {
-        tables.push(table);
+        allTables.push(table);
       }
     });
     
-    // Filter out-of-state teams only from stats tables
-    tables.forEach(table => filterOutOfStateTeams(table));
-    
-    if (tables.length === 0) {
-      console.log('No tables found to enhance');
+    if (allTables.length === 0) {
+      console.log('No tables found');
       isEnhancing = false;
       return;
     }
     
-    console.log(`Found ${tables.length} tables to enhance`);
-    
-    // Check if tables are already enhanced (has Pos or Grade columns)
-    const alreadyEnhanced = tables.every(table => {
-      const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
-      return headers.includes('Pos') || headers.includes('Grade');
+    // Filter to only tables that haven't been enhanced yet
+    const tables = allTables.filter(table => {
+      return !table.hasAttribute('data-enhanced');
     });
     
-    if (alreadyEnhanced) {
-      console.log('Tables already enhanced, skipping');
-      lastEnhancedUrl = currentUrl;
+    if (tables.length === 0) {
+      console.log('All tables already enhanced, skipping');
       isEnhancing = false;
+      lastEnhancedUrl = currentUrl;
       return;
     }
+    
+    console.log(`Found ${tables.length} new tables to enhance (${allTables.length} total tables)`);
+    
+    // Filter out-of-state teams only from stats tables
+    tables.forEach(table => filterOutOfStateTeams(table));
     
     // OPTIMIZATION: Replace team names first (doesn't require any fetching)
     tables.forEach(table => {
       replaceTeamNames(table);
     });
     
-    // Collect all unique team IDs from visible players
+    // Collect all unique team IDs from visible players in NEW tables only
     const teamIds = new Set();
     tables.forEach(table => {
       table.querySelectorAll('tbody tr').forEach(row => {
@@ -92,6 +90,10 @@
     
     if (teamIds.size === 0) {
       console.log('No teams found');
+      // Still mark tables as enhanced even if no teams
+      tables.forEach(table => {
+        table.setAttribute('data-enhanced', 'true');
+      });
       isEnhancing = false;
       return;
     }
@@ -159,11 +161,17 @@
     if (Object.keys(playerData).length > 0) {
       tables.forEach(table => {
         addPositionAndGrade(table, playerData);
+        // Mark this table as enhanced
+        table.setAttribute('data-enhanced', 'true');
       });
       console.log(`Enhanced ${tables.length} tables`);
     } else {
       console.log('No player data available to enhance tables');
       showErrorMessage('Could not load any team data');
+      // Still mark as enhanced to avoid trying again
+      tables.forEach(table => {
+        table.setAttribute('data-enhanced', 'true');
+      });
     }
     
     lastEnhancedUrl = currentUrl;
@@ -437,7 +445,7 @@
     
     const headerTexts = Array.from(headers).map(h => h.textContent.trim());
     if (headerTexts.includes('Pos') || headerTexts.includes('Grade')) {
-      console.log('Table already enhanced, skipping');
+      console.log('Table already has position/grade columns, skipping');
       return;
     }
     
