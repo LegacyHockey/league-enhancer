@@ -2,33 +2,8 @@
   'use strict';
   
   const CACHE_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
-  let allPlayerData = {};
   let isEnhancing = false;
   let lastEnhancedUrl = '';
-  
-  // All Minnesota conference page IDs (excluding Out of State)
-  const MN_CONFERENCES = [
-    '9113382', // Big 9
-    '9113405', // Big South
-    '9113424', // Central Lakes
-    '9113443', // Granite Ridge
-    '9113450', // IMAC
-    '9113459', // Independents
-    '9113474', // Iron Range
-    '9113483', // Lake
-    '9113496', // Lake Superior
-    '9113513', // Mariucci
-    '9113528', // Metro East
-    '9113545', // Metro West
-    '9113562', // Mississippi 8
-    '9113577', // Northwest
-    '9113586', // Northwest Suburban
-    '9113611', // South Suburban
-    '9113630', // Suburban East
-    '9113656', // Tri-Metro
-    '9113667', // West Central
-    '9113678'  // Wright County
-  ];
   
   // Detect if on mobile
   const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
@@ -38,7 +13,6 @@
     if (isEnhancing) return;
     
     const currentUrl = location.href;
-    if (currentUrl === lastEnhancedUrl) return;
     
     isEnhancing = true;
     console.log('Stats Enhancer: Starting enhancement (Mobile: ' + isMobile + ')');
@@ -51,86 +25,188 @@
     
     const season = seasonMatch[1];
     
-    // Load data if not already loaded
-    if (Object.keys(allPlayerData).length === 0) {
-      const cacheKey = `league_mn_v3_${season}`;
-      const cached = localStorage.getItem(cacheKey);
-      
-      if (cached) {
-        const parsedCache = JSON.parse(cached);
-        if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
-          console.log('Using cached league roster data');
-          allPlayerData = parsedCache.data;
-        } else {
-          console.log('Cache expired, fetching fresh data');
-          showLoadingIndicator('Loading Minnesota team rosters...');
-          try {
-            allPlayerData = await fetchAllMNTeamRosters(season);
-            localStorage.setItem(cacheKey, JSON.stringify({
-              data: allPlayerData,
-              timestamp: Date.now()
-            }));
-          } catch (error) {
-            console.error('Error fetching rosters:', error);
-            showLoadingIndicator('⚠️ Loading failed. Please refresh page.');
-            setTimeout(hideLoadingIndicator, 5000);
-            isEnhancing = false;
-            return;
-          }
-          hideLoadingIndicator();
-        }
-      } else {
-        console.log('No cache found, fetching roster data');
-        showLoadingIndicator('Loading Minnesota team rosters...');
-        try {
-          allPlayerData = await fetchAllMNTeamRosters(season);
-          localStorage.setItem(cacheKey, JSON.stringify({
-            data: allPlayerData,
-            timestamp: Date.now()
-          }));
-        } catch (error) {
-          console.error('Error fetching rosters:', error);
-          showLoadingIndicator('⚠️ Loading failed. Please refresh page.');
-          setTimeout(hideLoadingIndicator, 5000);
-          isEnhancing = false;
-          return;
-        }
-        hideLoadingIndicator();
-      }
-    }
+    console.log('Waiting for tables to load...');
+    await waitForTables();
+    console.log('Tables loaded');
     
-    if (Object.keys(allPlayerData).length === 0) {
-      console.log('No roster data available');
+    // Find all tables that need enhancement
+    const allTables = [];
+    document.querySelectorAll('table').forEach(table => {
+      const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
+      if (headers.includes('#') && headers.includes('Name') && headers.includes('Team')) {
+        allTables.push(table);
+      }
+    });
+    
+    if (allTables.length === 0) {
+      console.log('No tables found');
       isEnhancing = false;
       return;
     }
     
-    console.log('Waiting for tables to load...');
-    await waitForTables();
-    console.log('Tables loaded, enhancing...');
-    
-    filterOutOfStateTeams();
-    
-    let enhanced = 0;
-    document.querySelectorAll('table').forEach(table => {
-      const headers = Array.from(table.querySelectorAll('thead th')).map(h => h.textContent.trim());
-      if (headers.includes('#') && headers.includes('Name') && headers.includes('Team')) {
-        enhanceTable(table, allPlayerData);
-        enhanced++;
-      }
+    // Filter to only tables that haven't been enhanced yet
+    const tables = allTables.filter(table => {
+      return !table.hasAttribute('data-enhanced');
     });
     
-    console.log(`Enhanced ${enhanced} tables`);
+    if (tables.length === 0) {
+      console.log('All tables already enhanced, skipping');
+      isEnhancing = false;
+      lastEnhancedUrl = currentUrl;
+      return;
+    }
+    
+    console.log(`Found ${tables.length} new tables to enhance`);
+    
+    // Filter out-of-state teams only from stats tables
+    tables.forEach(table => filterOutOfStateTeams(table));
+    
+    // OPTIMIZATION: Replace team names first (doesn't require any fetching)
+    tables.forEach(table => {
+      replaceTeamNames(table);
+    });
+    
+    // Collect all unique team IDs from visible players in NEW tables only
+    const teamIds = new Set();
+    tables.forEach(table => {
+      table.querySelectorAll('tbody tr').forEach(row => {
+        if (row.style.display === 'none') return; // Skip hidden out-of-state rows
+        
+        const teamCell = Array.from(row.querySelectorAll('td')).find(cell => 
+          cell.querySelector('a[href*="/page/show/"]')
+        );
+        
+        if (teamCell) {
+          const teamLink = teamCell.querySelector('a[href*="/page/show/"]');
+          const teamIdMatch = teamLink?.href?.match(/page\/show\/(\d+)/);
+          if (teamIdMatch) {
+            teamIds.add(teamIdMatch[1]);
+          }
+        }
+      });
+    });
+    
+    console.log(`Found ${teamIds.size} unique teams on this page`);
+    
+    if (teamIds.size === 0) {
+      console.log('No teams found');
+      tables.forEach(table => {
+        table.setAttribute('data-enhanced', 'true');
+      });
+      isEnhancing = false;
+      return;
+    }
+    
+    // Check how many teams are already cached
+    let cachedTeamCount = 0;
+    for (const teamId of teamIds) {
+      const cacheKey = `team_${teamId}_${season}`;
+      const cached = localStorage.getItem(cacheKey);
+      if (cached) {
+        const parsedCache = JSON.parse(cached);
+        if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
+          cachedTeamCount++;
+        }
+      }
+    }
+    
+    const needsToFetch = cachedTeamCount < teamIds.size;
+    console.log(`${cachedTeamCount}/${teamIds.size} teams cached, ${needsToFetch ? 'will fetch new data' : 'all cached'}`);
+    
+    // Only show loading indicator if we need to fetch new data
+    if (needsToFetch) {
+      showLoadingIndicator(`Loading data for ${teamIds.size - cachedTeamCount} teams...`);
+    }
+    
+    // Fetch roster data for only these teams
+    const playerData = {};
+    let loadedCount = 0;
+    let failedCount = 0;
+    let fetchedCount = 0;
+    
+    for (const teamId of teamIds) {
+      try {
+        const cacheKey = `team_${teamId}_${season}`;
+        let teamRoster = null;
+        
+        // Try cache first
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          const parsedCache = JSON.parse(cached);
+          if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
+            teamRoster = parsedCache.data;
+            console.log(`Using cached data for team ${teamId}`);
+          }
+        }
+        
+        // Fetch if not cached
+        if (!teamRoster) {
+          console.log(`Fetching roster for team ${teamId}`);
+          teamRoster = await fetchTeamRoster(teamId, season);
+          fetchedCount++;
+          
+          // Cache it
+          try {
+            localStorage.setItem(cacheKey, JSON.stringify({
+              data: teamRoster,
+              timestamp: Date.now()
+            }));
+          } catch (e) {
+            console.warn('Could not cache team data:', e.message);
+          }
+          
+          // Small delay between fetches to avoid overwhelming mobile connections
+          await new Promise(resolve => setTimeout(resolve, isMobile ? 100 : 30));
+          
+          // Update progress only if showing indicator
+          if (needsToFetch && fetchedCount % 2 === 0) {
+            showLoadingIndicator(`Loading data... ${fetchedCount}/${teamIds.size - cachedTeamCount} teams`);
+          }
+        }
+        
+        Object.assign(playerData, teamRoster);
+        loadedCount++;
+      } catch (error) {
+        console.error(`Failed to fetch team ${teamId}:`, error.message);
+        failedCount++;
+      }
+    }
+    
+    if (needsToFetch) {
+      hideLoadingIndicator();
+    }
+    
+    console.log(`Loaded ${loadedCount} teams (${cachedTeamCount} cached, ${fetchedCount} fetched), failed ${failedCount}, total ${Object.keys(playerData).length} players`);
+    
+    // Even if some teams failed, enhance with what we have
+    if (Object.keys(playerData).length > 0) {
+      tables.forEach(table => {
+        addPositionAndGrade(table, playerData);
+        // Mark this table as enhanced
+        table.setAttribute('data-enhanced', 'true');
+      });
+      console.log(`Enhanced ${tables.length} tables`);
+    } else {
+      console.log('No player data available to enhance tables');
+      if (needsToFetch) {
+        showErrorMessage('Could not load any team data');
+      }
+      tables.forEach(table => {
+        table.setAttribute('data-enhanced', 'true');
+      });
+    }
+    
     lastEnhancedUrl = currentUrl;
     isEnhancing = false;
   }
   
-  function filterOutOfStateTeams() {
+  function filterOutOfStateTeams(table) {
     let hiddenCount = 0;
-    document.querySelectorAll('table tbody tr').forEach(row => {
+    table.querySelectorAll('tbody tr').forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
       
+      let shouldHide = false;
       cells.forEach(cell => {
         const teamLink = cell.querySelector('a[href*="/page/show/"]');
         if (teamLink) {
@@ -147,15 +223,93 @@
           );
           
           if (isOutOfState) {
-            row.style.display = 'none';
-            hiddenCount++;
+            shouldHide = true;
           }
         }
       });
+      
+      if (shouldHide) {
+        row.style.display = 'none';
+        hiddenCount++;
+      }
     });
     if (hiddenCount > 0) {
-      console.log(`Filtered out ${hiddenCount} out-of-state team rows`);
+      console.log(`Filtered out ${hiddenCount} out-of-state team rows from stats table`);
     }
+  }
+  
+  // NEW: Separate function to just replace team names (fast, no fetching needed)
+  function replaceTeamNames(table) {
+    const headerRow = table.querySelector('thead tr');
+    const bodyRows = table.querySelectorAll('tbody tr');
+    
+    if (!headerRow || bodyRows.length === 0) return;
+    
+    const headers = headerRow.querySelectorAll('th');
+    let teamIndex = -1;
+    
+    headers.forEach((header, index) => {
+      if (header.textContent.trim() === 'Team') {
+        teamIndex = index;
+      }
+    });
+    
+    if (teamIndex === -1) return;
+    
+    // Add a style tag for team cells if not already added
+    if (!document.getElementById('team-cell-overflow-style')) {
+      const style = document.createElement('style');
+      style.id = 'team-cell-overflow-style';
+      style.textContent = `
+        .team-cell-overflow {
+          max-width: ${isMobile ? '110px' : '180px'} !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+          padding-left: 8px !important;
+          padding-right: 8px !important;
+        }
+        .team-link-overflow {
+          display: block !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+          max-width: 100% !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
+    let teamNamesReplaced = 0;
+    
+    bodyRows.forEach(row => {
+      const cells = row.querySelectorAll('td');
+      if (cells.length === 0) return;
+      
+      const teamCell = cells[teamIndex];
+      const teamLink = teamCell?.querySelector('a');
+      
+      if (teamLink) {
+        const fullTeamName = teamLink.getAttribute('title');
+        
+        if (fullTeamName) {
+          // Check if it's already been replaced (not an abbreviation)
+          const currentText = teamLink.textContent.trim();
+          if (currentText.length <= 10) {
+            // Use the full team name from the title
+            teamLink.textContent = fullTeamName;
+            
+            // Add classes for overflow handling
+            teamCell.classList.add('team-cell-overflow');
+            teamLink.classList.add('team-link-overflow');
+            
+            teamNamesReplaced++;
+          }
+        }
+      }
+    });
+    
+    console.log(`Replaced ${teamNamesReplaced} team names`);
   }
   
   async function waitForTables() {
@@ -179,8 +333,8 @@
       });
       
       if (hasPlayerLinks && linkCount >= 10) {
-        console.log(`Found ${linkCount} player links, waiting 800ms more...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
+        console.log(`Found ${linkCount} player links, waiting 200ms more...`);
+        await new Promise(resolve => setTimeout(resolve, 200));
         return;
       }
       
@@ -199,16 +353,16 @@
       indicator.style.cssText = `
         position: fixed;
         top: 20px;
-        right: 20px;
+        ${isMobile ? 'left: 50%; transform: translateX(-50%);' : 'right: 20px;'}
         background: #2c3e50;
         color: white;
-        padding: 15px 25px;
+        padding: ${isMobile ? '12px 20px' : '15px 25px'};
         border-radius: 6px;
-        font-size: 14px;
+        font-size: ${isMobile ? '13px' : '14px'};
         font-weight: 600;
         box-shadow: 0 4px 12px rgba(0,0,0,0.3);
         z-index: 99999;
-        max-width: 300px;
+        max-width: ${isMobile ? '90%' : '300px'};
       `;
       
       const style = document.createElement('style');
@@ -222,13 +376,18 @@
       document.body.appendChild(indicator);
     }
     
-    const showSpinner = !message.includes('⚠️');
+    const showSpinner = !message.includes('⚠️') && !message.includes('Could not');
     indicator.innerHTML = `
       <div style="display: flex; align-items: center; gap: 10px;">
-        ${showSpinner ? '<div style="width: 20px; height: 20px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : ''}
-        <span>${message}</span>
+        ${showSpinner ? '<div style="width: 18px; height: 18px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : ''}
+        <span style="font-size: ${isMobile ? '12px' : '14px'};">${message}</span>
       </div>
     `;
+  }
+  
+  function showErrorMessage(message) {
+    showLoadingIndicator('⚠️ ' + message);
+    setTimeout(hideLoadingIndicator, 5000);
   }
   
   function hideLoadingIndicator() {
@@ -240,118 +399,55 @@
     }
   }
   
-  async function fetchAllMNTeamRosters(season) {
-    const allTeamIds = new Set();
-    
-    // Fetch team IDs from each Minnesota conference
-    for (let i = 0; i < MN_CONFERENCES.length; i++) {
-      const confId = MN_CONFERENCES[i];
-      const url = `https://www.legacy.hockey/page/show/${confId}?subseason=${season}`;
-      
-      try {
-        const response = await fetch(url);
-        if (!response.ok) {
-          console.warn(`Failed to fetch conference ${confId}`);
-          continue;
-        }
-        
-        const html = await response.text();
-        const doc = new DOMParser().parseFromString(html, 'text/html');
-        
-        const teamLinks = doc.querySelectorAll('a[href*="/page/show/"]');
-        let foundTeams = 0;
-        
-        teamLinks.forEach(link => {
-          if (link.href.includes(`subseason=${season}`)) {
-            const match = link.href.match(/page\/show\/(\d+)/);
-            if (match && match[1] !== confId) {
-              allTeamIds.add(match[1]);
-              foundTeams++;
-            }
-          }
-        });
-        
-        console.log(`Conference ${i + 1}/${MN_CONFERENCES.length}: Found ${foundTeams} teams`);
-        
-        showLoadingIndicator(`Scanning conferences... ${i + 1}/${MN_CONFERENCES.length}`);
-        
-        // Longer delay on mobile to avoid overwhelming the connection
-        await new Promise(resolve => setTimeout(resolve, isMobile ? 100 : 50));
-      } catch (error) {
-        console.error(`Error fetching conference ${confId}:`, error);
-      }
-    }
-    
-    console.log(`Total: Found ${allTeamIds.size} Minnesota teams`);
-    showLoadingIndicator(`Found ${allTeamIds.size} teams. Loading rosters...`);
-    
-    // Fetch rosters with progress tracking
-    const allData = {};
-    let count = 0;
-    let errors = 0;
-    
-    for (const teamId of allTeamIds) {
-      try {
-        const rosterData = await fetchTeamRoster(teamId, season);
-        Object.assign(allData, rosterData);
-        count++;
-        
-        // Update progress every 5 teams to reduce UI updates
-        if (count % 5 === 0 || count === allTeamIds.size) {
-          showLoadingIndicator(`Loading rosters... ${count}/${allTeamIds.size}`);
-        }
-        
-        // Longer delay on mobile
-        await new Promise(resolve => setTimeout(resolve, isMobile ? 120 : 80));
-      } catch (error) {
-        console.error(`Error fetching team ${teamId}:`, error);
-        errors++;
-        // Continue despite errors
-      }
-    }
-    
-    console.log(`Fetched ${count} teams, ${Object.keys(allData).length} players (${errors} errors)`);
-    
-    if (Object.keys(allData).length === 0) {
-      throw new Error('No roster data loaded');
-    }
-    
-    return allData;
-  }
-  
   async function fetchTeamRoster(teamId, season) {
     const url = `https://www.legacy.hockey/roster/show/${teamId}?subseason=${season}`;
     
-    const response = await fetch(url);
-    if (!response.ok) return {};
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), isMobile ? 8000 : 4000);
     
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const playerMap = {};
-    
-    doc.querySelectorAll('table tbody tr').forEach(row => {
-      const cells = row.querySelectorAll('td');
-      if (cells.length >= 5) {
-        const number = cells[0]?.textContent?.trim();
-        const nameLink = cells[2]?.querySelector('a');
-        const playerIdMatch = nameLink?.href?.match(/roster_players\/(\d+)/);
-        const position = cells[3]?.textContent?.trim();
-        const grade = cells[4]?.textContent?.trim();
-        
-        if (playerIdMatch && number !== 'MGR') {
-          playerMap[playerIdMatch[1]] = {
-            number: number,
-            position: position || '',
-            grade: grade || ''
-          };
-        }
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeout);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
       }
-    });
-    
-    return playerMap;
+      
+      const html = await response.text();
+      const doc = new DOMParser().parseFromString(html, 'text/html');
+      const playerMap = {};
+      
+      doc.querySelectorAll('table tbody tr').forEach(row => {
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 5) {
+          const number = cells[0]?.textContent?.trim();
+          const nameLink = cells[2]?.querySelector('a');
+          const playerIdMatch = nameLink?.href?.match(/roster_players\/(\d+)/);
+          const position = cells[3]?.textContent?.trim();
+          const grade = cells[4]?.textContent?.trim();
+          
+          if (playerIdMatch && number !== 'MGR') {
+            playerMap[playerIdMatch[1]] = {
+              number: number,
+              position: position || '',
+              grade: grade || ''
+            };
+          }
+        }
+      });
+      
+      return playerMap;
+    } catch (error) {
+      clearTimeout(timeout);
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout');
+      }
+      throw error;
+    }
   }
   
-  function enhanceTable(table, playerData) {
+  // RENAMED: This now only adds position and grade columns
+  function addPositionAndGrade(table, playerData) {
     const headerRow = table.querySelector('thead tr');
     const bodyRows = table.querySelectorAll('tbody tr');
     
@@ -361,7 +457,8 @@
     let nameIndex = -1;
     
     headers.forEach((header, index) => {
-      if (header.textContent.trim() === 'Name') {
+      const headerText = header.textContent.trim();
+      if (headerText === 'Name') {
         nameIndex = index;
       }
     });
@@ -370,13 +467,13 @@
     
     const headerTexts = Array.from(headers).map(h => h.textContent.trim());
     if (headerTexts.includes('Pos') || headerTexts.includes('Grade')) {
-      console.log('Table already enhanced, skipping');
+      console.log('Table already has position/grade columns, skipping');
       return;
     }
     
     const sampleHeader = headers[0];
     const isGoalieTable = headerTexts.includes('GAA') && headerTexts.includes('SV %');
-    console.log(`Enhancing ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
+    console.log(`Adding position/grade columns to ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
     
     if (!isGoalieTable) {
       const posHeader = document.createElement('th');
@@ -404,6 +501,7 @@
     }
     
     let matchedCount = 0;
+    
     bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
@@ -446,7 +544,7 @@
       }
     });
     
-    console.log(`Table enhanced (${isGoalieTable ? 'Goalie' : 'Skater'}): ${matchedCount}/${bodyRows.length} players matched`);
+    console.log(`Added position/grade to ${matchedCount}/${bodyRows.length} players`);
   }
   
   function sortTable(table, columnIndex) {
@@ -472,7 +570,7 @@
   }
   
   function init() {
-    setTimeout(enhanceLeagueStats, 2000);
+    setTimeout(enhanceLeagueStats, 300);
   }
   
   if (document.readyState === 'loading') {
@@ -495,7 +593,7 @@
     
     if (shouldEnhance && !isEnhancing) {
       lastEnhancedUrl = '';
-      setTimeout(enhanceLeagueStats, 1500);
+      setTimeout(enhanceLeagueStats, 500);
     }
   });
   
