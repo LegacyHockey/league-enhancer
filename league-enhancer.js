@@ -213,6 +213,30 @@
     
     if (teamIndex === -1) return;
     
+    // Add a style tag for team cells if not already added
+    if (!document.getElementById('team-cell-overflow-style')) {
+      const style = document.createElement('style');
+      style.id = 'team-cell-overflow-style';
+      style.textContent = `
+        .team-cell-overflow {
+          max-width: ${isMobile ? '110px' : '180px'} !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+          padding-left: 8px !important;
+          padding-right: 8px !important;
+        }
+        .team-link-overflow {
+          display: block !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          white-space: nowrap !important;
+          max-width: 100% !important;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+    
     let teamNamesReplaced = 0;
     
     bodyRows.forEach(row => {
@@ -229,22 +253,9 @@
           // Use the full team name from the title
           teamLink.textContent = fullTeamName;
           
-          // Apply proper overflow styling to both the cell and the link
-          teamCell.style.cssText = `
-            max-width: ${isMobile ? '100px' : '180px'};
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-            padding-left: 8px;
-            padding-right: 8px;
-          `;
-          
-          teamLink.style.cssText = `
-            display: block;
-            overflow: hidden;
-            text-overflow: ellipsis;
-            white-space: nowrap;
-          `;
+          // Add classes for overflow handling
+          teamCell.classList.add('team-cell-overflow');
+          teamLink.classList.add('team-link-overflow');
           
           teamNamesReplaced++;
         }
