@@ -48,7 +48,7 @@
       return;
     }
     
-    console.log('Found ' + tables.length + ' tables to enhance');
+    console.log(`Found ${tables.length} tables to enhance`);
     
     // Collect all unique team IDs from visible players
     const teamIds = new Set();
@@ -70,7 +70,7 @@
       });
     });
     
-    console.log('Found ' + teamIds.size + ' unique teams on this page');
+    console.log(`Found ${teamIds.size} unique teams on this page`);
     
     if (teamIds.size === 0) {
       console.log('No teams found');
@@ -79,7 +79,7 @@
     }
     
     // Show loading indicator
-    showLoadingIndicator('Loading data for ' + teamIds.size + ' teams...');
+    showLoadingIndicator(`Loading data for ${teamIds.size} teams...`);
     
     // Fetch roster data for only these teams
     const playerData = {};
@@ -88,7 +88,7 @@
     
     for (const teamId of teamIds) {
       try {
-        const cacheKey = 'team_' + teamId + '_' + season;
+        const cacheKey = `team_${teamId}_${season}`;
         let teamRoster = null;
         
         // Try cache first
@@ -97,13 +97,13 @@
           const parsedCache = JSON.parse(cached);
           if (Date.now() - parsedCache.timestamp < CACHE_DURATION) {
             teamRoster = parsedCache.data;
-            console.log('Using cached data for team ' + teamId);
+            console.log(`Using cached data for team ${teamId}`);
           }
         }
         
         // Fetch if not cached
         if (!teamRoster) {
-          console.log('Fetching roster for team ' + teamId);
+          console.log(`Fetching roster for team ${teamId}`);
           teamRoster = await fetchTeamRoster(teamId, season);
           
           // Cache it
@@ -125,24 +125,24 @@
         
         // Update progress
         if (loadedCount % 3 === 0 || loadedCount === teamIds.size) {
-          showLoadingIndicator('Loading data... ' + loadedCount + '/' + teamIds.size + ' teams');
+          showLoadingIndicator(`Loading data... ${loadedCount}/${teamIds.size} teams`);
         }
       } catch (error) {
-        console.error('Failed to fetch team ' + teamId + ':', error.message);
+        console.error(`Failed to fetch team ${teamId}:`, error.message);
         failedCount++;
       }
     }
     
     hideLoadingIndicator();
     
-    console.log('Loaded ' + loadedCount + ' teams, failed ' + failedCount + ', total ' + Object.keys(playerData).length + ' players');
+    console.log(`Loaded ${loadedCount} teams, failed ${failedCount}, total ${Object.keys(playerData).length} players`);
     
     // Even if some teams failed, enhance with what we have
     if (Object.keys(playerData).length > 0) {
       tables.forEach(table => {
         enhanceTable(table, playerData);
       });
-      console.log('Enhanced ' + tables.length + ' tables');
+      console.log(`Enhanced ${tables.length} tables`);
     } else {
       console.log('No player data available to enhance tables');
       showErrorMessage('Could not load any team data');
@@ -186,7 +186,7 @@
       }
     });
     if (hiddenCount > 0) {
-      console.log('Filtered out ' + hiddenCount + ' out-of-state team rows from stats table');
+      console.log(`Filtered out ${hiddenCount} out-of-state team rows from stats table`);
     }
   }
   
@@ -211,7 +211,7 @@
       });
       
       if (hasPlayerLinks && linkCount >= 10) {
-        console.log('Found ' + linkCount + ' player links, waiting 800ms more...');
+        console.log(`Found ${linkCount} player links, waiting 800ms more...`);
         await new Promise(resolve => setTimeout(resolve, 800));
         return;
       }
@@ -228,30 +228,39 @@
     if (!indicator) {
       indicator = document.createElement('div');
       indicator.id = 'roster-loading-indicator';
-      indicator.style.cssText = 'position: fixed;' +
-        'top: 20px;' +
-        (isMobile ? 'left: 50%; transform: translateX(-50%);' : 'right: 20px;') +
-        'background: #2c3e50;' +
-        'color: white;' +
-        'padding: ' + (isMobile ? '12px 20px' : '15px 25px') + ';' +
-        'border-radius: 6px;' +
-        'font-size: ' + (isMobile ? '13px' : '14px') + ';' +
-        'font-weight: 600;' +
-        'box-shadow: 0 4px 12px rgba(0,0,0,0.3);' +
-        'z-index: 99999;' +
-        'max-width: ' + (isMobile ? '90%' : '300px') + ';';
+      indicator.style.cssText = `
+        position: fixed;
+        top: 20px;
+        ${isMobile ? 'left: 50%; transform: translateX(-50%);' : 'right: 20px;'}
+        background: #2c3e50;
+        color: white;
+        padding: ${isMobile ? '12px 20px' : '15px 25px'};
+        border-radius: 6px;
+        font-size: ${isMobile ? '13px' : '14px'};
+        font-weight: 600;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        z-index: 99999;
+        max-width: ${isMobile ? '90%' : '300px'};
+      `;
       
       const style = document.createElement('style');
-      style.textContent = '@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }';
+      style.textContent = `
+        @keyframes spin {
+          0% { transform: rotate(0deg); }
+          100% { transform: rotate(360deg); }
+        }
+      `;
       document.head.appendChild(style);
       document.body.appendChild(indicator);
     }
     
-    const showSpinner = message.indexOf('⚠️') === -1 && message.indexOf('Could not') === -1;
-    indicator.innerHTML = '<div style="display: flex; align-items: center; gap: 10px;">' +
-      (showSpinner ? '<div style="width: 18px; height: 18px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : '') +
-      '<span style="font-size: ' + (isMobile ? '12px' : '14px') + ';">' + message + '</span>' +
-      '</div>';
+    const showSpinner = !message.includes('⚠️') && !message.includes('Could not');
+    indicator.innerHTML = `
+      <div style="display: flex; align-items: center; gap: 10px;">
+        ${showSpinner ? '<div style="width: 18px; height: 18px; border: 3px solid #f3f3f3; border-top: 3px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; flex-shrink: 0;"></div>' : ''}
+        <span style="font-size: ${isMobile ? '12px' : '14px'};">${message}</span>
+      </div>
+    `;
   }
   
   function showErrorMessage(message) {
@@ -264,22 +273,22 @@
     if (indicator) {
       indicator.style.transition = 'opacity 0.3s';
       indicator.style.opacity = '0';
-      setTimeout(function() { indicator.remove(); }, 300);
+      setTimeout(() => indicator.remove(), 300);
     }
   }
   
   async function fetchTeamRoster(teamId, season) {
-    const url = 'https://www.legacy.hockey/roster/show/' + teamId + '?subseason=' + season;
+    const url = `https://www.legacy.hockey/roster/show/${teamId}?subseason=${season}`;
     
     const controller = new AbortController();
-    const timeout = setTimeout(function() { controller.abort(); }, isMobile ? 10000 : 5000);
+    const timeout = setTimeout(() => controller.abort(), isMobile ? 10000 : 5000);
     
     try {
       const response = await fetch(url, { signal: controller.signal });
       clearTimeout(timeout);
       
       if (!response.ok) {
-        throw new Error('HTTP ' + response.status);
+        throw new Error(`HTTP ${response.status}`);
       }
       
       const html = await response.text();
@@ -323,16 +332,21 @@
     
     const headers = headerRow.querySelectorAll('th');
     let nameIndex = -1;
+    let teamIndex = -1;
     
-    headers.forEach(function(header, index) {
-      if (header.textContent.trim() === 'Name') {
+    headers.forEach((header, index) => {
+      const headerText = header.textContent.trim();
+      if (headerText === 'Name') {
         nameIndex = index;
+      }
+      if (headerText === 'Team') {
+        teamIndex = index;
       }
     });
     
     if (nameIndex === -1) return;
     
-    const headerTexts = Array.from(headers).map(function(h) { return h.textContent.trim(); });
+    const headerTexts = Array.from(headers).map(h => h.textContent.trim());
     if (headerTexts.includes('Pos') || headerTexts.includes('Grade')) {
       console.log('Table already enhanced, skipping');
       return;
@@ -340,7 +354,7 @@
     
     const sampleHeader = headers[0];
     const isGoalieTable = headerTexts.includes('GAA') && headerTexts.includes('SV %');
-    console.log('Enhancing ' + (isGoalieTable ? 'Goalie' : 'Skater') + ' table');
+    console.log(`Enhancing ${isGoalieTable ? 'Goalie' : 'Skater'} table`);
     
     if (!isGoalieTable) {
       const posHeader = document.createElement('th');
@@ -348,7 +362,7 @@
       posHeader.className = sampleHeader.className;
       posHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
       posHeader.title = 'Sort by Position (sorts current page only)';
-      posHeader.onclick = function() { sortTable(table, nameIndex + 1); };
+      posHeader.onclick = () => sortTable(table, nameIndex + 1);
       headers[nameIndex].after(posHeader);
     }
     
@@ -358,7 +372,7 @@
     gradeHeader.style.cssText = 'text-align: center; font-weight: bold; cursor: pointer;';
     gradeHeader.title = 'Sort by Grade (sorts current page only)';
     const gradeColumnIndex = isGoalieTable ? nameIndex + 1 : nameIndex + 2;
-    gradeHeader.onclick = function() { sortTable(table, gradeColumnIndex); };
+    gradeHeader.onclick = () => sortTable(table, gradeColumnIndex);
     
     if (isGoalieTable) {
       headers[nameIndex].after(gradeHeader);
@@ -368,7 +382,9 @@
     }
     
     let matchedCount = 0;
-    bodyRows.forEach(function(row) {
+    let teamNamesReplaced = 0;
+    
+    bodyRows.forEach(row => {
       const cells = row.querySelectorAll('td');
       if (cells.length === 0) return;
       
@@ -386,6 +402,31 @@
           position = info.position;
           grade = info.grade;
           matchedCount++;
+        }
+      }
+      
+      // Replace team abbreviation with full name from title attribute
+      if (teamIndex !== -1) {
+        const teamCell = cells[teamIndex];
+        const teamLink = teamCell?.querySelector('a');
+        
+        if (teamLink) {
+          const fullTeamName = teamLink.getAttribute('title');
+          
+          if (fullTeamName) {
+            // Use the full team name from the title
+            teamLink.textContent = fullTeamName;
+            
+            // Add ellipsis styling if needed
+            teamCell.style.cssText = `
+              max-width: ${isMobile ? '120px' : '200px'};
+              overflow: hidden;
+              text-overflow: ellipsis;
+              white-space: nowrap;
+            `;
+            
+            teamNamesReplaced++;
+          }
         }
       }
       
@@ -410,18 +451,18 @@
       }
     });
     
-    console.log('Table enhanced (' + (isGoalieTable ? 'Goalie' : 'Skater') + '): ' + matchedCount + '/' + bodyRows.length + ' players matched');
+    console.log(`Table enhanced (${isGoalieTable ? 'Goalie' : 'Skater'}): ${matchedCount}/${bodyRows.length} players matched, ${teamNamesReplaced} team names replaced`);
   }
   
   function sortTable(table, columnIndex) {
     const tbody = table.querySelector('tbody');
     const rows = Array.from(tbody.querySelectorAll('tr'));
     
-    const currentDir = table.dataset['sort' + columnIndex];
+    const currentDir = table.dataset[`sort${columnIndex}`];
     const direction = currentDir === 'asc' ? 'desc' : 'asc';
-    table.dataset['sort' + columnIndex] = direction;
+    table.dataset[`sort${columnIndex}`] = direction;
     
-    rows.sort(function(a, b) {
+    rows.sort((a, b) => {
       const aVal = a.querySelectorAll('td')[columnIndex]?.textContent?.trim() || '';
       const bVal = b.querySelectorAll('td')[columnIndex]?.textContent?.trim() || '';
       
@@ -432,7 +473,7 @@
       }
     });
     
-    rows.forEach(function(row) { tbody.appendChild(row); });
+    rows.forEach(row => tbody.appendChild(row));
   }
   
   function init() {
@@ -445,10 +486,10 @@
     init();
   }
   
-  const observer = new MutationObserver(function(mutations) {
+  const observer = new MutationObserver((mutations) => {
     let shouldEnhance = false;
-    mutations.forEach(function(mutation) {
-      mutation.addedNodes.forEach(function(node) {
+    mutations.forEach(mutation => {
+      mutation.addedNodes.forEach(node => {
         if (node.nodeType === 1) {
           if (node.tagName === 'TABLE' || node.querySelector('table')) {
             shouldEnhance = true;
