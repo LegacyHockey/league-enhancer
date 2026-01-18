@@ -333,8 +333,8 @@
       });
       
       if (hasPlayerLinks && linkCount >= 10) {
-        console.log(`Found ${linkCount} player links, waiting 800ms more...`);
-        await new Promise(resolve => setTimeout(resolve, 800));
+        console.log(`Found ${linkCount} player links, waiting 200ms more...`);
+        await new Promise(resolve => setTimeout(resolve, 200));
         return;
       }
       
@@ -570,7 +570,7 @@
   }
   
   function init() {
-    setTimeout(enhanceLeagueStats, 2000);
+    setTimeout(enhanceLeagueStats, 300);
   }
   
   if (document.readyState === 'loading') {
@@ -593,7 +593,7 @@
     
     if (shouldEnhance && !isEnhancing) {
       lastEnhancedUrl = '';
-      setTimeout(enhanceLeagueStats, 1500);
+      setTimeout(enhanceLeagueStats, 500);
     }
   });
   
