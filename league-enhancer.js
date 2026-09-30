@@ -603,3 +603,231 @@
   });
   
 })();
+
+/* ===== Stream column for schedule tables ===== */
+/*
+ * Legacy.Hockey — "Stream" column for SportsEngine schedule tables
+ *
+ * Adds a Stream column to every schedule table on the page (team schedules
+ * and the overall schedule). For each game row it opens that game's detail
+ * page (/game/show/<id>) in the background, looks for a video stream link,
+ * and shows a "Watch" link if one is found.
+ *
+ * - Only checks rows as they scroll into view, a few at a time.
+ * - Caches results in the visitor's browser so repeat visits are instant.
+ * - Re-runs automatically if SportsEngine swaps the table (e.g. subseason tabs).
+ */
+(function () {
+  'use strict';
+
+  var CONFIG = {
+    headerLabel: 'Stream',
+    insertAfterHeader: 'Location',   // new column goes right after this one; falls back to last column
+    linkLabel: '\u25B6 Watch',
+
+    // Once we know exactly how SportsEngine marks the stream on a game page,
+    // put that CSS selector here (e.g. '.game-video a') and it will be used instead
+    // of the host/keyword detection below.
+    streamSelector: '',
+
+    // Optional: CSS selector for the main content area of a game detail page.
+    // Limits the search so site-wide header/footer links never count.
+    gameContentSelector: '',
+
+    // Links (or embedded players) pointing at these sites count as a stream.
+    streamHosts: [
+      'nfhsnetwork.com', 'hockeytv.com', 'livebarn.com', 'sportsengineplay.com',
+      'youtube.com', 'youtu.be', 'vimeo.com', 'twitch.tv', 'boxcast.tv', 'boxcast.com'
+    ],
+
+    // Fallback: an off-site link whose text contains one of these also counts.
+    linkTextKeywords: ['watch live', 'live stream', 'livestream', 'stream', 'broadcast'],
+
+    positiveCacheHours: 24,  // remember "has a stream" this long
+    negativeCacheHours: 1,   // re-check "no stream" games hourly (streams get added late)
+    maxConcurrent: 4
+  };
+
+  var GAME_LINK = /\/game\/show\/(\d+)/;
+  var CACHE_PREFIX = 'lhStream:';
+  var EXCLUDE = 'header, footer, nav, [id*="header"], [id*="Header"], [id*="footer"], [id*="Footer"], [class*="social"], [class*="footer"], [class*="Footer"]';
+  var queue = [];
+  var active = 0;
+
+  /* ---------- cache ---------- */
+  function cacheGet(id) {
+    try {
+      var raw = localStorage.getItem(CACHE_PREFIX + id);
+      if (!raw) return undefined;
+      var e = JSON.parse(raw);
+      var ttl = (e.url ? CONFIG.positiveCacheHours : CONFIG.negativeCacheHours) * 3600000;
+      return (Date.now() - e.t > ttl) ? undefined : e.url;
+    } catch (err) { return undefined; }
+  }
+  function cacheSet(id, url) {
+    try { localStorage.setItem(CACHE_PREFIX + id, JSON.stringify({ url: url || null, t: Date.now() })); } catch (err) {}
+  }
+
+  /* ---------- stream detection ---------- */
+  function resolve(href, base) {
+    try { return new URL(href, base); } catch (err) { return null; }
+  }
+  function isStreamHost(u) {
+    if (!u) return false;
+    var h = u.hostname.replace(/^www\./, '');
+    return CONFIG.streamHosts.some(function (s) { return h === s || h.slice(-(s.length + 1)) === '.' + s; });
+  }
+  function usable(el) { return !el.closest(EXCLUDE); }
+
+  function findStreamUrl(doc, base) {
+    var baseHost = resolve(base).hostname;
+
+    if (CONFIG.streamSelector) {
+      var el = doc.querySelector(CONFIG.streamSelector);
+      if (!el) return null;
+      var a = el.matches('a[href]') ? el : el.querySelector('a[href]');
+      var f = el.matches('iframe[src]') ? el : el.querySelector('iframe[src]');
+      var target = a ? a.getAttribute('href') : (f ? f.getAttribute('src') : null);
+      var u = target && resolve(target, base);
+      return u ? u.href : base; // stream marked but no link: send viewers to the game page
+    }
+
+    var root = (CONFIG.gameContentSelector && doc.querySelector(CONFIG.gameContentSelector)) || doc.body;
+    if (!root) return null;
+
+    var links = Array.prototype.filter.call(root.querySelectorAll('a[href]'), usable);
+    for (var i = 0; i < links.length; i++) {
+      var lu = resolve(links[i].getAttribute('href'), base);
+      if (isStreamHost(lu)) return lu.href;
+    }
+    var frames = Array.prototype.filter.call(root.querySelectorAll('iframe[src]'), usable);
+    for (var j = 0; j < frames.length; j++) {
+      var fu = resolve(frames[j].getAttribute('src'), base);
+      if (isStreamHost(fu)) return base; // embedded player: link to the game page itself
+    }
+    for (var k = 0; k < links.length; k++) {
+      var text = links[k].textContent.toLowerCase();
+      var ku = resolve(links[k].getAttribute('href'), base);
+      if (ku && ku.hostname !== baseHost &&
+          CONFIG.linkTextKeywords.some(function (w) { return text.indexOf(w) !== -1; })) {
+        return ku.href;
+      }
+    }
+    return null;
+  }
+
+  /* ---------- rendering ---------- */
+  function render(td, url) {
+    td.textContent = '';
+    if (!url) return;
+    var a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    a.className = 'lh-stream-link';
+    a.textContent = CONFIG.linkLabel;
+    a.setAttribute('aria-label', 'Watch stream of this game');
+    td.appendChild(a);
+  }
+
+  /* ---------- fetch queue ---------- */
+  function check(td) {
+    var id = td.dataset.gameId;
+    var gameUrl = td.dataset.gameUrl;
+    return fetch(gameUrl, { credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
+      .then(function (html) {
+        var doc = new DOMParser().parseFromString(html, 'text/html');
+        var url = findStreamUrl(doc, gameUrl);
+        cacheSet(id, url);
+        render(td, url);
+      })
+      .catch(function () { td.textContent = ''; });
+  }
+  function pump() {
+    while (active < CONFIG.maxConcurrent && queue.length) {
+      var td = queue.shift();
+      active++;
+      check(td).then(function () { active--; pump(); });
+    }
+  }
+  function enqueue(td) {
+    td.textContent = '\u2026';
+    queue.push(td);
+    pump();
+  }
+  var io = ('IntersectionObserver' in window)
+    ? new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) { io.unobserve(e.target); enqueue(e.target); }
+        });
+      }, { rootMargin: '300px' })
+    : null;
+
+  /* ---------- table handling ---------- */
+  function processTable(table) {
+    if (table.dataset.lhStream) return;
+    if (!table.querySelector('a[href*="/game/show/"]')) return;
+    table.dataset.lhStream = '1';
+
+    var headRow = (table.tHead && table.tHead.rows[0]) || table.rows[0];
+    if (!headRow) return;
+    var headers = Array.prototype.slice.call(headRow.cells);
+    var colCount = headers.length;
+    var idx = -1;
+    headers.forEach(function (c, i) {
+      if (idx === -1 && c.textContent.trim().toLowerCase() === CONFIG.insertAfterHeader.toLowerCase()) idx = i;
+    });
+    var insertAt = idx >= 0 ? idx + 1 : colCount;
+
+    var th = document.createElement('th');
+    th.textContent = CONFIG.headerLabel;
+    th.className = 'lh-stream-col';
+    headRow.insertBefore(th, headRow.cells[insertAt] || null);
+
+    Array.prototype.forEach.call(table.rows, function (row) {
+      if (row === headRow) return;
+      if (row.cells.length < colCount) {           // month divider / spanning row
+        var last = row.cells[row.cells.length - 1];
+        if (last) last.colSpan += 1;
+        return;
+      }
+      var td = document.createElement('td');
+      td.className = 'lh-stream-col';
+      row.insertBefore(td, row.cells[insertAt] || null);
+
+      var link = row.querySelector('a[href*="/game/show/"]');
+      var m = link && link.getAttribute('href').match(GAME_LINK);
+      if (!m) return;
+
+      var cached = cacheGet(m[1]);
+      if (cached !== undefined) { render(td, cached); return; }
+
+      td.dataset.gameId = m[1];
+      td.dataset.gameUrl = new URL(link.getAttribute('href'), location.href).href;
+      if (io) io.observe(td); else enqueue(td);
+    });
+  }
+
+  function scan() {
+    Array.prototype.forEach.call(document.querySelectorAll('table'), processTable);
+  }
+
+  /* ---------- styles ---------- */
+  var style = document.createElement('style');
+  style.textContent =
+    '.lh-stream-col{text-align:center;white-space:nowrap}' +
+    '.lh-stream-link{font-weight:600;text-decoration:none}' +
+    '.lh-stream-link:hover,.lh-stream-link:focus{text-decoration:underline}';
+  document.head.appendChild(style);
+
+  /* ---------- start ---------- */
+  var timer;
+  function scheduleScan() { clearTimeout(timer); timer = setTimeout(scan, 150); }
+  function start() {
+    scan();
+    new MutationObserver(scheduleScan).observe(document.body, { childList: true, subtree: true });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
+  else start();
+})();
