@@ -645,7 +645,7 @@
 
     positiveCacheHours: 24,  // remember "has a stream" this long
     negativeCacheHours: 1,   // re-check "no stream" games hourly (streams get added late)
-    maxConcurrent: 4
+    maxConcurrent: 8
   };
 
   var GAME_LINK = /\/game\/show\/(\d+)/;
@@ -761,7 +761,7 @@
         entries.forEach(function (e) {
           if (e.isIntersecting) { io.unobserve(e.target); enqueue(e.target); }
         });
-      }, { rootMargin: '300px' })
+      }, { rootMargin: '100px' })
     : null;
 
   /* ---------- table handling ---------- */
@@ -822,8 +822,14 @@
   document.head.appendChild(style);
 
   /* ---------- start ---------- */
-  var timer;
-  function scheduleScan() { clearTimeout(timer); timer = setTimeout(scan, 150); }
+  // Throttle (not debounce): ads and other scripts change the page constantly,
+  // and a debounce kept postponing the scan. This scans within 100ms, guaranteed.
+  var pending = false;
+  function scheduleScan() {
+    if (pending) return;
+    pending = true;
+    setTimeout(function () { pending = false; scan(); }, 100);
+  }
   function start() {
     scan();
     new MutationObserver(scheduleScan).observe(document.body, { childList: true, subtree: true });
