@@ -837,3 +837,21 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start);
   else start();
 })();
+
+
+/* ===== Next Game widget: show date/time on mobile ===== */
+(function () {
+  'use strict';
+  var style = document.createElement('style');
+  style.textContent =
+    '@media (max-width:768px){' +
+    '.game-header.has-title .game-header-center .datetime{' +
+    'display:block!important;visibility:visible!important;opacity:1!important;' +
+    'height:auto!important;text-align:center;font-size:16px;line-height:1.4;margin-top:4px}' +
+    '.game-header.has-title .datetime .day,' +
+    '.game-header.has-title .datetime .date,' +
+    '.game-header.has-title .datetime .time{' +
+    'display:inline!important;visibility:visible!important}' +
+    '}';
+  document.head.appendChild(style);
+})();
