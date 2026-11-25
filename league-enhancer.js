@@ -637,7 +637,7 @@
     // Links (or embedded players) pointing at these sites count as a stream.
     streamHosts: [
       'nfhsnetwork.com', 'hockeytv.com', 'livebarn.com', 'sportsengineplay.com',
-      'youtube.com', 'youtu.be', 'vimeo.com', 'twitch.tv', 'boxcast.tv', 'boxcast.com'
+      'youtube.com', 'youtu.be', 'vimeo.com', 'twitch.tv', 'boxcast.tv', 'boxcast.com', 'mnhockey.tv', 'staylive.tv'
     ],
 
     // Fallback: an off-site link whose text contains one of these also counts.
