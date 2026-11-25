@@ -644,7 +644,7 @@
     linkTextKeywords: ['watch live', 'live stream', 'livestream', 'stream', 'broadcast'],
 
     positiveCacheHours: 24,  // remember "has a stream" this long
-    negativeCacheHours: 1,   // re-check "no stream" games hourly (streams get added late)
+    negativeCacheHours: 0.15,   // re-check "no stream" games every ~9 min (streams often get added on game day)
     maxConcurrent: 8
   };
 
