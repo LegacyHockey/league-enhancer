@@ -689,7 +689,7 @@
       var f = el.matches('iframe[src]') ? el : el.querySelector('iframe[src]');
       var target = a ? a.getAttribute('href') : (f ? f.getAttribute('src') : null);
       var u = target && resolve(target, base);
-      return u ? u.href : base; // stream marked but no link: send viewers to the game page
+      return base; // stream marked but no link: send viewers to the game page
     }
 
     var root = (CONFIG.gameContentSelector && doc.querySelector(CONFIG.gameContentSelector)) || doc.body;
@@ -698,7 +698,7 @@
     var links = Array.prototype.filter.call(root.querySelectorAll('a[href]'), usable);
     for (var i = 0; i < links.length; i++) {
       var lu = resolve(links[i].getAttribute('href'), base);
-      if (isStreamHost(lu)) return lu.href;
+      if (isStreamHost(lu)) return base;
     }
     var frames = Array.prototype.filter.call(root.querySelectorAll('iframe[src]'), usable);
     for (var j = 0; j < frames.length; j++) {
@@ -710,7 +710,7 @@
       var ku = resolve(links[k].getAttribute('href'), base);
       if (ku && ku.hostname !== baseHost &&
           CONFIG.linkTextKeywords.some(function (w) { return text.indexOf(w) !== -1; })) {
-        return ku.href;
+        return base;
       }
     }
     return null;
